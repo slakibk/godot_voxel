@@ -124,9 +124,6 @@ public:
 			JobData &job = _jobs[i];
 			CRASH_COND(job.thread != nullptr);
 
-			job.input_mutex = Mutex::create();
-			job.output_mutex = Mutex::create();
-			job.semaphore = Semaphore::create();
 			job.thread = Thread::create(_thread_func, &job);
 			job.needs_sort = true;
 			job.processor = processors[i];
@@ -138,7 +135,7 @@ public:
 		for (unsigned int i = 0; i < _job_count; ++i) {
 			JobData &job = _jobs[i];
 			job.thread_exit = true;
-			job.semaphore->post();
+			job.semaphore.post();
 		}
 
 		for (unsigned int i = 0; i < _job_count; ++i) {
@@ -149,9 +146,6 @@ public:
 			Thread::wait_to_finish(job.thread);
 
 			memdelete(job.thread);
-			memdelete(job.semaphore);
-			memdelete(job.input_mutex);
-			memdelete(job.output_mutex);
 		}
 	}
 
@@ -168,7 +162,7 @@ public:
 
 			JobData &job = _jobs[job_index];
 
-			job.input_mutex->lock();
+			job.input_mutex.lock();
 
 			highest_pending_count = MAX(highest_pending_count, job.shared_input.blocks.size());
 			lowest_pending_count = MIN(lowest_pending_count, job.shared_input.blocks.size());
@@ -238,10 +232,10 @@ public:
 
 			bool should_run = !job.shared_input.is_empty();
 
-			job.input_mutex->unlock();
+			job.input_mutex.unlock();
 
 			if (should_run) {
-				job.semaphore->post();
+				job.semaphore.post();
 			}
 		}
 
@@ -293,8 +287,8 @@ private:
 		//------------------------
 		Input shared_input;
 		Output shared_output;
-		Mutex *input_mutex = nullptr;
-		Mutex *output_mutex = nullptr;
+		Mutex input_mutex;
+		Mutex output_mutex;
 		// Indexes which blocks are present in shared_input,
 		// so if we push a duplicate request with the same coordinates, we can discard it without a linear search
 		FixedArray<HashMap<Vector3i, int, Vector3iHasher>, VoxelConstants::MAX_LOD> shared_input_block_indexes;
@@ -305,7 +299,7 @@ private:
 
 		Input input;
 		Output output;
-		Semaphore *semaphore = nullptr;
+		Semaphore semaphore;
 		Thread *thread = nullptr;
 		uint32_t sync_interval_ms = 100;
 		uint32_t job_index = -1;
@@ -470,15 +464,15 @@ private:
 			}
 
 			// Wait for future wake-up
-			data.semaphore->wait();
+			data.semaphore.wait();
 		}
 	}
 
 	static inline float get_priority_heuristic(const InputBlock &a, const Vector3i &viewer_block_pos, const Vector3 &viewer_direction, int max_lod) {
 		int f = 1 << a.lod;
 		Vector3i p = a.position * f;
-		float d = Math::sqrt(p.distance_sq(viewer_block_pos) + 0.1f);
-		float dp = viewer_direction.dot(viewer_block_pos.to_vec3() / d);
+		float d = Math::sqrt(get_distance_sq(p, viewer_block_pos) + 0.1f);
+		float dp = viewer_direction.dot(Vector3(viewer_block_pos) / d);
 		// Higher lod indexes come first to allow the octree to subdivide.
 		// Then comes distance, which is modified by how much in view the block is
 		return (max_lod - a.lod) * 10000.f + d + (1.f - dp) * 4.f * f;
@@ -560,7 +554,7 @@ private:
 					continue;
 				}
 
-				Rect3i box = Rect3i::from_center_extents(data.input.priority_position >> ib.lod, Vector3i(data.input.exclusive_region_extent));
+				Rect3i box = Rect3i::from_center_extents(data.input.priority_position >> ib.lod, Vector3i_xyz(data.input.exclusive_region_extent));
 
 				if (!box.contains(ib.position)) {
 

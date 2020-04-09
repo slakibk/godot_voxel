@@ -156,14 +156,15 @@ protected:
 	int get_size_y() const { return _size.y; }
 	int get_size_z() const { return _size.z; }
 
+	// TODO Convert these to Vector3i
 	// Bindings
-	Vector3 _b_get_size() const { return _size.to_vec3(); }
+	Vector3 _b_get_size() const { return Vector3(_size); }
 	void _b_create(int x, int y, int z) { create(x, y, z); }
 	uint64_t _b_get_voxel(int x, int y, int z, unsigned int channel) const { return get_voxel(x, y, z, channel); }
 	void _b_set_voxel(uint64_t value, int x, int y, int z, unsigned int channel) { set_voxel(value, x, y, z, channel); }
 	void _b_copy_channel_from(Ref<VoxelBuffer> other, unsigned int channel);
 	void _b_copy_channel_from_area(Ref<VoxelBuffer> other, Vector3 src_min, Vector3 src_max, Vector3 dst_min, unsigned int channel);
-	void _b_fill_area(uint64_t defval, Vector3 min, Vector3 max, unsigned int channel_index) { fill_area(defval, Vector3i(min), Vector3i(max), channel_index); }
+	void _b_fill_area(uint64_t defval, Vector3 min, Vector3 max, unsigned int channel_index) { fill_area(defval, to_vec3i(min), to_vec3i(max), channel_index); }
 	void _b_set_voxel_f(real_t value, int x, int y, int z, unsigned int channel) { set_voxel_f(value, x, y, z, channel); }
 	void _b_set_voxel_v(uint64_t value, Vector3 pos, unsigned int channel_index = 0) { set_voxel(value, pos.x, pos.y, pos.z, channel_index); }
 	void _b_downscale_to(Ref<VoxelBuffer> dst, Vector3 src_min, Vector3 src_max, Vector3 dst_min) const;

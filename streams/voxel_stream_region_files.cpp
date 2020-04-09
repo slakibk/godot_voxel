@@ -113,8 +113,8 @@ VoxelStreamRegionFiles::EmergeResult VoxelStreamRegionFiles::_emerge_block(Ref<V
 		}
 	}
 
-	const Vector3i block_size = Vector3i(1 << _meta.block_size_po2);
-	const Vector3i region_size = Vector3i(1 << _meta.region_size_po2);
+	const Vector3i block_size = Vector3i_xyz(1 << _meta.block_size_po2);
+	const Vector3i region_size = Vector3i_xyz(1 << _meta.region_size_po2);
 
 	CRASH_COND(!_meta_loaded);
 	ERR_FAIL_COND_V(lod >= _meta.lod_count, EMERGE_FAILED);
@@ -134,7 +134,7 @@ VoxelStreamRegionFiles::EmergeResult VoxelStreamRegionFiles::_emerge_block(Ref<V
 		return EMERGE_OK_FALLBACK;
 	}
 
-	Vector3i block_rpos = block_pos.wrap(region_size);
+	Vector3i block_rpos = wrap(block_pos, region_size);
 	int lut_index = get_block_index_in_header(block_rpos);
 	const BlockInfo &block_info = cache->header.blocks[lut_index];
 
@@ -154,7 +154,7 @@ VoxelStreamRegionFiles::EmergeResult VoxelStreamRegionFiles::_emerge_block(Ref<V
 	CRASH_COND(f->eof_reached());
 
 	ERR_FAIL_COND_V_MSG(!_block_serializer.decompress_and_deserialize(f, block_data_size, **out_buffer), EMERGE_FAILED,
-			String("Failed to read block {0} at region {1}").format(varray(block_pos.to_vec3(), region_pos.to_vec3())));
+			String("Failed to read block {0} at region {1}").format(varray(block_pos, region_pos)));
 
 	return EMERGE_OK;
 }
@@ -202,16 +202,16 @@ void VoxelStreamRegionFiles::_immerge_block(Ref<VoxelBuffer> voxel_buffer, Vecto
 	}
 
 	// Verify format
-	const Vector3i block_size = Vector3i(1 << _meta.block_size_po2);
+	const Vector3i block_size = Vector3i_xyz(1 << _meta.block_size_po2);
 	ERR_FAIL_COND(voxel_buffer->get_size() != block_size);
 	for (unsigned int i = 0; i < VoxelBuffer::MAX_CHANNELS; ++i) {
 		ERR_FAIL_COND(voxel_buffer->get_channel_depth(i) != _meta.channel_depths[i]);
 	}
 
-	const Vector3i region_size = Vector3i(1 << _meta.region_size_po2);
+	const Vector3i region_size = Vector3i_xyz(1 << _meta.region_size_po2);
 	Vector3i block_pos = get_block_position_from_voxels(origin_in_voxels) >> lod;
 	Vector3i region_pos = get_region_position_from_blocks(block_pos);
-	Vector3i block_rpos = block_pos.wrap(region_size);
+	Vector3i block_rpos = wrap(block_pos, region_size);
 	//print_line(String("Immerging block {0} r {1}").format(varray(block_pos.to_vec3(), region_pos.to_vec3())));
 
 	CachedRegion *cache = open_region(region_pos, lod, true);
@@ -414,7 +414,7 @@ static Array to_varray(const Vector3i &v) {
 }
 
 static bool u8_from_json_variant(Variant v, uint8_t &i) {
-	ERR_FAIL_COND_V(v.get_type() != Variant::INT && v.get_type() != Variant::REAL, false);
+	ERR_FAIL_COND_V(v.get_type() != Variant::INT && v.get_type() != Variant::FLOAT, false);
 	int n = v;
 	ERR_FAIL_COND_V(n < 0 || n > 255, false);
 	i = v;
@@ -422,7 +422,7 @@ static bool u8_from_json_variant(Variant v, uint8_t &i) {
 }
 
 static bool s32_from_json_variant(Variant v, int &i) {
-	ERR_FAIL_COND_V(v.get_type() != Variant::INT && v.get_type() != Variant::REAL, false);
+	ERR_FAIL_COND_V(v.get_type() != Variant::INT && v.get_type() != Variant::FLOAT, false);
 	i = v;
 	return true;
 }
@@ -625,7 +625,7 @@ VoxelStreamRegionFiles::CachedRegion *VoxelStreamRegionFiles::open_region(const 
 		close_oldest_region();
 	}
 
-	const Vector3i region_size = Vector3i(1 << _meta.region_size_po2);
+	const Vector3i region_size = Vector3i_xyz(1 << _meta.region_size_po2);
 
 	String fpath = get_region_file_path(region_pos, lod);
 	Error existing_file_err;
@@ -664,7 +664,7 @@ VoxelStreamRegionFiles::CachedRegion *VoxelStreamRegionFiles::open_region(const 
 		_region_cache.push_back(cache);
 		RegionHeader &header = cache->header;
 
-		header.blocks.resize(region_size.volume());
+		header.blocks.resize(get_volume(region_size));
 
 		save_header(cache);
 
@@ -698,7 +698,7 @@ VoxelStreamRegionFiles::CachedRegion *VoxelStreamRegionFiles::open_region(const 
 		_region_cache.push_back(cache);
 		RegionHeader &header = cache->header;
 
-		header.blocks.resize(region_size.volume());
+		header.blocks.resize(get_volume(region_size));
 
 		// TODO Deal with endianess
 		existing_f->get_buffer((uint8_t *)header.blocks.data(), header.blocks.size() * sizeof(BlockInfo));
@@ -800,13 +800,13 @@ void VoxelStreamRegionFiles::close_oldest_region() {
 }
 
 unsigned int VoxelStreamRegionFiles::get_block_index_in_header(const Vector3i &rpos) const {
-	const Vector3i region_size(1 << _meta.region_size_po2);
-	return rpos.get_zxy_index(region_size);
+	const Vector3i region_size = Vector3i_xyz(1 << _meta.region_size_po2);
+	return get_zxy_index(rpos, region_size);
 }
 
 Vector3i VoxelStreamRegionFiles::get_block_position_from_index(int i) const {
-	const Vector3i region_size(1 << _meta.region_size_po2);
-	return Vector3i::from_zxy_index(i, region_size);
+	const Vector3i region_size = Vector3i_xyz(1 << _meta.region_size_po2);
+	return Vector3i_from_zxy_index(i, region_size);
 }
 
 int VoxelStreamRegionFiles::get_sector_count_from_bytes(int size_in_bytes) const {
@@ -816,8 +816,8 @@ int VoxelStreamRegionFiles::get_sector_count_from_bytes(int size_in_bytes) const
 int VoxelStreamRegionFiles::get_region_header_size() const {
 	// Which file offset blocks data is starting
 	// magic + version + blockinfos
-	const Vector3i region_size(1 << _meta.region_size_po2);
-	return MAGIC_AND_VERSION_SIZE + region_size.volume() * sizeof(BlockInfo);
+	const Vector3i region_size = Vector3i_xyz(1 << _meta.region_size_po2);
+	return MAGIC_AND_VERSION_SIZE + get_volume(region_size) * sizeof(BlockInfo);
 }
 
 static inline int convert_block_coordinate(int p_x, int old_size, int new_size) {
@@ -927,10 +927,10 @@ void VoxelStreamRegionFiles::_convert_files(Meta new_meta) {
 	_meta = new_meta;
 	ERR_FAIL_COND(save_meta() != VOXEL_FILE_OK);
 
-	const Vector3i old_block_size = Vector3i(1 << old_meta.block_size_po2);
-	const Vector3i new_block_size = Vector3i(1 << _meta.block_size_po2);
+	const Vector3i old_block_size = Vector3i_xyz(1 << old_meta.block_size_po2);
+	const Vector3i new_block_size = Vector3i_xyz(1 << _meta.block_size_po2);
 
-	const Vector3i old_region_size = Vector3i(1 << old_meta.region_size_po2);
+	const Vector3i old_region_size = Vector3i_xyz(1 << old_meta.region_size_po2);
 
 	// Read all blocks from the old stream and write them into the new one
 
@@ -942,7 +942,7 @@ void VoxelStreamRegionFiles::_convert_files(Meta new_meta) {
 			continue;
 		}
 
-		print_line(String("Converting region lod{0}/{1}").format(varray(region_info.lod, region_info.position.to_vec3())));
+		print_line(String("Converting region lod{0}/{1}").format(varray(region_info.lod, region_info.position)));
 
 		const RegionHeader &header = region->header;
 		for (unsigned int j = 0; j < header.blocks.size(); ++j) {
@@ -1021,11 +1021,7 @@ void VoxelStreamRegionFiles::_convert_files(Meta new_meta) {
 }
 
 Vector3i VoxelStreamRegionFiles::get_region_size() const {
-	return Vector3i(1 << _meta.region_size_po2);
-}
-
-Vector3 VoxelStreamRegionFiles::get_region_size_v() const {
-	return get_region_size().to_vec3();
+	return Vector3i_xyz(1 << _meta.region_size_po2);
 }
 
 int VoxelStreamRegionFiles::get_region_size_po2() const {
@@ -1123,6 +1119,10 @@ void VoxelStreamRegionFiles::convert_files(Dictionary d) {
 	emit_changed();
 }
 
+Vector3 VoxelStreamRegionFiles::_b_get_region_size() const {
+	return get_region_size();
+}
+
 void VoxelStreamRegionFiles::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_directory", "directory"), &VoxelStreamRegionFiles::set_directory);
@@ -1130,7 +1130,7 @@ void VoxelStreamRegionFiles::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("get_block_size_po2"), &VoxelStreamRegionFiles::get_block_size_po2);
 	ClassDB::bind_method(D_METHOD("get_lod_count"), &VoxelStreamRegionFiles::get_lod_count);
-	ClassDB::bind_method(D_METHOD("get_region_size"), &VoxelStreamRegionFiles::get_region_size_v);
+	ClassDB::bind_method(D_METHOD("get_region_size"), &VoxelStreamRegionFiles::_b_get_region_size);
 	ClassDB::bind_method(D_METHOD("get_region_size_po2"), &VoxelStreamRegionFiles::get_region_size_po2);
 	ClassDB::bind_method(D_METHOD("get_sector_size"), &VoxelStreamRegionFiles::get_sector_size);
 

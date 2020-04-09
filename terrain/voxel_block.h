@@ -9,7 +9,7 @@
 
 //#define VOXEL_DEBUG_LOD_MATERIALS
 
-class Spatial;
+class Node3D;
 
 // Internal structure holding a reference to mesh visuals, physics and a block of voxel data.
 class VoxelBlock {
@@ -33,8 +33,8 @@ public:
 
 	// Visuals and physics
 
-	void set_world(Ref<World> p_world);
-	void set_mesh(Ref<Mesh> mesh, Spatial *node, bool generate_collision, Array surface_arrays, bool debug_collision);
+	void set_world(Ref<World3D> p_world);
+	void set_mesh(Ref<Mesh> mesh, Node3D *node, bool generate_collision, Array surface_arrays, bool debug_collision);
 	void set_transition_mesh(Ref<Mesh> mesh, int side);
 	bool has_mesh() const;
 
@@ -82,7 +82,7 @@ private:
 	DirectMeshInstance _mesh_instance;
 	FixedArray<DirectMeshInstance, Cube::SIDE_COUNT> _transition_mesh_instances;
 	DirectStaticBody _static_body;
-	Ref<World> _world;
+	Ref<World3D> _world;
 
 #ifdef VOXEL_DEBUG_LOD_MATERIALS
 	Ref<Material> _debug_material;

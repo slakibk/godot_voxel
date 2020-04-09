@@ -10,8 +10,7 @@ static const unsigned int MESH_COMPRESSION_FLAGS =
 		Mesh::ARRAY_COMPRESS_TANGENT |
 		//Mesh::ARRAY_COMPRESS_COLOR | // Using color as 4 full floats to transfer extra attributes for now...
 		Mesh::ARRAY_COMPRESS_TEX_UV |
-		Mesh::ARRAY_COMPRESS_TEX_UV2 |
-		Mesh::ARRAY_COMPRESS_WEIGHTS;
+		Mesh::ARRAY_COMPRESS_TEX_UV2;
 
 // Multiply integer math results by this
 static const float FIXED_FACTOR = 1.f / 256.f;
@@ -53,7 +52,7 @@ Vector3 get_border_offset(const Vector3 pos, const int lod_index, const Vector3i
 
 	const float wk = TRANSITION_CELL_SCALE * p2k; // 2 ^ (lod - 2), if scale is 0.25
 
-	for (unsigned int i = 0; i < Vector3i::AXIS_COUNT; ++i) {
+	for (unsigned int i = 0; i < Vector3i_AXIS_COUNT; ++i) {
 
 		const float p = pos[i];
 		const float s = block_size[i];
@@ -102,7 +101,7 @@ inline uint8_t get_border_mask(const Vector3i &pos, const Vector3i &block_size) 
 	// 16: -Z
 	// 32: +Z
 
-	for (unsigned int i = 0; i < Vector3i::AXIS_COUNT; i++) {
+	for (unsigned int i = 0; i < Vector3i_AXIS_COUNT; i++) {
 		// Close to negative face.
 		if (pos[i] == 0) {
 			mask |= (1 << (i * 2));
@@ -143,10 +142,10 @@ void VoxelMesherTransvoxel::clear_output() {
 
 void VoxelMesherTransvoxel::fill_surface_arrays(Array &arrays) {
 
-	PoolVector<Vector3> vertices;
-	PoolVector<Vector3> normals;
-	PoolVector<Color> extra;
-	PoolVector<int> indices;
+	Vector<Vector3> vertices;
+	Vector<Vector3> normals;
+	Vector<Color> extra;
+	Vector<int> indices;
 
 	raw_copy_to(vertices, _output_vertices);
 	raw_copy_to(normals, _output_normals);
@@ -223,7 +222,7 @@ Ref<ArrayMesh> VoxelMesherTransvoxel::build_transition_mesh(Ref<VoxelBuffer> vox
 	Array arrays;
 	fill_surface_arrays(arrays);
 	mesh.instance();
-	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, Array(), MESH_COMPRESSION_FLAGS);
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), MESH_COMPRESSION_FLAGS);
 	return mesh;
 }
 
@@ -245,7 +244,7 @@ void VoxelMesherTransvoxel::build_internal(const VoxelBuffer &voxels, unsigned i
 	}
 
 	const Vector3i block_size_with_padding = voxels.get_size();
-	const Vector3i block_size = block_size_with_padding - Vector3i(MIN_PADDING + MAX_PADDING);
+	const Vector3i block_size = block_size_with_padding - Vector3i_xyz(MIN_PADDING + MAX_PADDING);
 	const Vector3i block_size_scaled = block_size << lod_index;
 
 	// Prepare vertex reuse cache
@@ -253,8 +252,8 @@ void VoxelMesherTransvoxel::build_internal(const VoxelBuffer &voxels, unsigned i
 
 	// We iterate 2x2 voxel groups, which the paper calls "cells".
 	// We also reach one voxel further to compute normals, so we adjust the iterated area
-	const Vector3i min_pos = Vector3i(MIN_PADDING);
-	const Vector3i max_pos = block_size_with_padding - Vector3i(MAX_PADDING);
+	const Vector3i min_pos = Vector3i_xyz(MIN_PADDING);
+	const Vector3i max_pos = block_size_with_padding - Vector3i_xyz(MAX_PADDING);
 	//const Vector3i max_pos_c = max_pos - Vector3i(1);
 
 	FixedArray<int8_t, 8> cell_samples;
@@ -352,7 +351,7 @@ void VoxelMesherTransvoxel::build_internal(const VoxelBuffer &voxels, unsigned i
 
 				FixedArray<int, 12> cell_vertex_indices(-1);
 
-				uint8_t cell_border_mask = get_border_mask(pos - min_pos, block_size - Vector3i(1));
+				uint8_t cell_border_mask = get_border_mask(pos - min_pos, block_size - Vector3i(1, 1, 1));
 
 				// For each vertex in the case
 				for (unsigned int i = 0; i < vertex_count; ++i) {
@@ -430,7 +429,7 @@ void VoxelMesherTransvoxel::build_internal(const VoxelBuffer &voxels, unsigned i
 							// or by falling back on the generator that was used to produce the volume.
 
 							Vector3i primary = p0 * ti0 + p1 * ti1;
-							Vector3 primaryf = primary.to_vec3() * FIXED_FACTOR;
+							Vector3 primaryf = Vector3(primary) * FIXED_FACTOR;
 							Vector3 normal = normalized_not_null(corner_gradients[v0] * t0 + corner_gradients[v1] * t1);
 
 							Vector3 secondary;
@@ -455,7 +454,7 @@ void VoxelMesherTransvoxel::build_internal(const VoxelBuffer &voxels, unsigned i
 						// This cell owns the vertex, so it should be created.
 
 						Vector3i primary = p1;
-						Vector3 primaryf = primary.to_vec3();
+						Vector3 primaryf = Vector3(primary);
 						Vector3 normal = normalized_not_null(corner_gradients[v1]);
 
 						Vector3 secondary;
@@ -491,7 +490,7 @@ void VoxelMesherTransvoxel::build_internal(const VoxelBuffer &voxels, unsigned i
 						if (!present || cell_vertex_indices[i] < 0) {
 
 							Vector3i primary = t == 0 ? p1 : p0;
-							Vector3 primaryf = primary.to_vec3();
+							Vector3 primaryf = Vector3(primary);
 							Vector3 normal = normalized_not_null(corner_gradients[t == 0 ? v1 : v0]);
 
 							// TODO This bit of code is repeated several times, factor it?
@@ -608,7 +607,7 @@ void VoxelMesherTransvoxel::build_transition(const VoxelBuffer &p_voxels, unsign
 	}
 
 	const Vector3i block_size_with_padding = p_voxels.get_size();
-	const Vector3i block_size_without_padding = block_size_with_padding - Vector3i(MIN_PADDING + MAX_PADDING);
+	const Vector3i block_size_without_padding = block_size_with_padding - Vector3i_xyz(MIN_PADDING + MAX_PADDING);
 	const Vector3i block_size_scaled = block_size_without_padding << lod_index;
 
 	ERR_FAIL_COND(block_size_with_padding.x < 3);
@@ -629,8 +628,8 @@ void VoxelMesherTransvoxel::build_transition(const VoxelBuffer &p_voxels, unsign
 	// This represents the actual box of voxels we are working on.
 	// It also represents positions of the minimum and maximum vertices that can be generated.
 	// Padding is present to allow reaching 1 voxel further for calculating normals
-	const Vector3i min_pos = Vector3i(MIN_PADDING);
-	const Vector3i max_pos = block_size_with_padding - Vector3i(MAX_PADDING);
+	const Vector3i min_pos = Vector3i_xyz(MIN_PADDING);
+	const Vector3i max_pos = block_size_with_padding - Vector3i_xyz(MAX_PADDING);
 
 	int axis_x, axis_y;
 	L::get_face_axes(axis_x, axis_y, direction);
@@ -808,7 +807,7 @@ void VoxelMesherTransvoxel::build_transition(const VoxelBuffer &p_voxels, unsign
 						const Vector3 n1 = cell_gradients[index_vertex_b];
 
 						Vector3i primary = p0 * ti0 + p1 * ti1;
-						Vector3 primaryf = primary.to_vec3() * FIXED_FACTOR;
+						Vector3 primaryf = Vector3(primary) * FIXED_FACTOR;
 						Vector3 normal = normalized_not_null(n0 * t0 + n1 * t1);
 
 						bool fullres_side = (index_vertex_a < 9 || index_vertex_b < 9);
@@ -861,7 +860,7 @@ void VoxelMesherTransvoxel::build_transition(const VoxelBuffer &p_voxels, unsign
 						// Going to create a new vertex
 
 						Vector3i primary = cell_positions[index_vertex];
-						Vector3 primaryf = primary.to_vec3();
+						Vector3 primaryf = Vector3(primary);
 						Vector3 normal = normalized_not_null(cell_gradients[index_vertex]);
 
 						bool fullres_side = (index_vertex < 9);

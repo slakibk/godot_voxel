@@ -1,4 +1,4 @@
-#if TOOLS_ENABLED
+#ifdef TOOLS_ENABLED
 
 #include "utility.h"
 #include "../cube_tables.h"
@@ -8,18 +8,18 @@ namespace VoxelDebug {
 Ref<Mesh> g_debug_box_mesh;
 
 void create_debug_box_mesh() {
-	PoolVector3Array positions;
+	Vector<Vector3> positions;
 	positions.resize(8);
 	{
-		PoolVector3Array::Write w = positions.write();
+		Vector3 *w = positions.ptrw();
 		for (int i = 0; i < positions.size(); ++i) {
 			w[i] = Cube::g_corner_position[i];
 		}
 	}
-	PoolIntArray indices;
+	Vector<int> indices;
 	indices.resize(Cube::EDGE_COUNT * 2);
 	{
-		PoolIntArray::Write w = indices.write();
+		int *w = indices.ptrw();
 		int j = 0;
 		for (int i = 0; i < Cube::EDGE_COUNT; ++i) {
 			w[j++] = Cube::g_edge_corners[i][0];
@@ -33,10 +33,10 @@ void create_debug_box_mesh() {
 	Ref<ArrayMesh> mesh;
 	mesh.instance();
 	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_LINES, arrays);
-	Ref<SpatialMaterial> mat;
+	Ref<StandardMaterial3D> mat;
 	mat.instance();
 	mat->set_albedo(Color(0, 1, 0));
-	mat->set_flag(SpatialMaterial::FLAG_UNSHADED, true);
+	mat->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
 	mesh->surface_set_material(0, mat);
 	g_debug_box_mesh = mesh;
 }

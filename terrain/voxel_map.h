@@ -118,8 +118,8 @@ private:
 	int _b_get_voxel_v(Vector3 pos, unsigned int c) { return get_voxel(Vector3i(pos), c); }
 	void _b_set_voxel_v(int value, Vector3 pos, unsigned int c) { set_voxel(value, Vector3i(pos), c); }
 	bool _b_has_block(int x, int y, int z) { return has_block(Vector3i(x, y, z)); }
-	Vector3 _b_voxel_to_block(Vector3 pos) const { return voxel_to_block(Vector3i(pos)).to_vec3(); }
-	Vector3 _b_block_to_voxel(Vector3 pos) const { return block_to_voxel(Vector3i(pos)).to_vec3(); }
+	Vector3 _b_voxel_to_block(Vector3 pos) const { return voxel_to_block(Vector3i(pos)); }
+	Vector3 _b_block_to_voxel(Vector3 pos) const { return block_to_voxel(Vector3i(pos)); }
 	bool _b_is_block_surrounded(Vector3 pos) const { return is_block_surrounded(Vector3i(pos)); }
 	void _b_get_buffer_copy(Vector3 pos, Ref<VoxelBuffer> dst_buffer_ref, unsigned int channel = 0);
 	void _b_set_block_buffer(Vector3 bpos, Ref<VoxelBuffer> buffer) { set_block_buffer(Vector3i(bpos), buffer); }

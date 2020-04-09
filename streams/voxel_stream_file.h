@@ -35,7 +35,7 @@ protected:
 	VoxelBlockSerializer _block_serializer;
 
 private:
-	Vector3 _get_block_size() const;
+	Vector3 _b_get_block_size() const;
 
 	Ref<VoxelStream> _fallback_stream;
 	bool _save_fallback_output = true;

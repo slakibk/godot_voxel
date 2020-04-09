@@ -6,13 +6,6 @@
 
 namespace {
 
-template <typename T>
-void raw_copy_to(PoolVector<T> &to, const Vector<T> &from) {
-	to.resize(from.size());
-	typename PoolVector<T>::Write w = to.write();
-	memcpy(w.ptr(), from.ptr(), from.size() * sizeof(T));
-}
-
 const int g_opposite_side[6] = {
 	Cube::SIDE_NEGATIVE_X,
 	Cube::SIDE_POSITIVE_X,
@@ -62,8 +55,8 @@ static void generate_blocky_mesh(
 	int deck_size = block_size.x * row_size;
 
 	// Data must be padded, hence the off-by-one
-	Vector3i min = Vector3i(VoxelMesherBlocky::PADDING);
-	Vector3i max = block_size - Vector3i(VoxelMesherBlocky::PADDING);
+	Vector3i min = Vector3i_xyz(VoxelMesherBlocky::PADDING);
+	Vector3i max = block_size - Vector3i_xyz(VoxelMesherBlocky::PADDING);
 
 	int index_offsets[VoxelMesherBlocky::MAX_MATERIALS] = { 0 };
 
@@ -231,7 +224,7 @@ static void generate_blocky_mesh(
 							arrays.normals.resize(arrays.normals.size() + vertex_count);
 							Vector3 *w = arrays.normals.data() + append_index;
 							for (unsigned int i = 0; i < vertex_count; ++i) {
-								w[i] = Cube::g_side_normals[side].to_vec3();
+								w[i] = Cube::g_side_normals[side];
 							}
 						}
 
@@ -455,11 +448,11 @@ void VoxelMesherBlocky::build(VoxelMesher::Output &output, const VoxelMesher::In
 			mesh_arrays.resize(Mesh::ARRAY_MAX);
 
 			{
-				PoolVector<Vector3> positions;
-				PoolVector<Vector2> uvs;
-				PoolVector<Vector3> normals;
-				PoolVector<Color> colors;
-				PoolVector<int> indices;
+				Vector<Vector3> positions;
+				Vector<Vector2> uvs;
+				Vector<Vector3> normals;
+				Vector<Color> colors;
+				Vector<int> indices;
 
 				raw_copy_to(positions, arrays.positions);
 				raw_copy_to(uvs, arrays.uvs);

@@ -9,7 +9,7 @@
 #include <core/core_string_names.h>
 #include <core/engine.h>
 #include <core/os/os.h>
-#include <scene/3d/mesh_instance.h>
+#include <scene/3d/mesh_instance_3d.h>
 
 const uint32_t MAIN_THREAD_MESHING_BUDGET_MS = 8;
 
@@ -51,7 +51,7 @@ VoxelTerrain::~VoxelTerrain() {
 
 String VoxelTerrain::get_configuration_warning() const {
 	if (_stream.is_valid()) {
-		if (! (_stream->get_used_channels_mask() & ((1<<VoxelBuffer::CHANNEL_TYPE) | (1<<VoxelBuffer::CHANNEL_SDF)))) {
+		if (!(_stream->get_used_channels_mask() & ((1 << VoxelBuffer::CHANNEL_TYPE) | (1 << VoxelBuffer::CHANNEL_SDF)))) {
 			return TTR("VoxelTerrain supports only stream channels \"Type\" or \"Sdf\".");
 		}
 	}
@@ -97,15 +97,16 @@ void VoxelTerrain::set_stream(Ref<VoxelStream> p_stream) {
 	}
 
 	if (_stream.is_valid()) {
-		if (_stream->is_connected(CoreStringNames::get_singleton()->changed, this, "_on_stream_params_changed")) {
-			_stream->disconnect(CoreStringNames::get_singleton()->changed, this, "_on_stream_params_changed");
+		const Callable c_params_changed = callable_mp(this, &VoxelTerrain::_on_stream_params_changed);
+		if (_stream->is_connected(CoreStringNames::get_singleton()->changed, c_params_changed)) {
+			_stream->disconnect(CoreStringNames::get_singleton()->changed, c_params_changed);
 		}
 	}
 
 	_stream = p_stream;
 
 	if (_stream.is_valid()) {
-		_stream->connect(CoreStringNames::get_singleton()->changed, this, "_on_stream_params_changed");
+		_stream->connect(CoreStringNames::get_singleton()->changed, callable_mp(this, &VoxelTerrain::_on_stream_params_changed));
 	}
 
 	_on_stream_params_changed();
@@ -237,7 +238,7 @@ NodePath VoxelTerrain::get_viewer_path() const {
 	return _viewer_path;
 }
 
-Spatial *VoxelTerrain::get_viewer() const {
+Node3D *VoxelTerrain::get_viewer() const {
 	if (!is_inside_tree()) {
 		return nullptr;
 	}
@@ -248,7 +249,7 @@ Spatial *VoxelTerrain::get_viewer() const {
 	if (node == nullptr) {
 		return nullptr;
 	}
-	return Object::cast_to<Spatial>(node);
+	return Object::cast_to<Node3D>(node);
 }
 
 void VoxelTerrain::set_material(unsigned int id, Ref<Material> material) {
@@ -281,7 +282,7 @@ void VoxelTerrain::make_block_dirty(Vector3i bpos) {
 		_blocks_pending_update.push_back(bpos);
 
 		if (!block->is_modified()) {
-			print_line(String("Marking block {0} as modified").format(varray(bpos.to_vec3())));
+			print_line(String("Marking block {0} as modified").format(varray(bpos)));
 			block->set_modified(true);
 		}
 	}
@@ -608,8 +609,8 @@ void VoxelTerrain::make_area_dirty(Rect3i box) {
 void VoxelTerrain::_notification(int p_what) {
 
 	struct SetWorldAction {
-		World *world;
-		SetWorldAction(World *w) :
+		World3D *world;
+		SetWorldAction(World3D *w) :
 				world(w) {}
 		void operator()(VoxelBlock *block) {
 			block->set_world(world);
@@ -692,7 +693,7 @@ void VoxelTerrain::get_viewer_pos_and_direction(Vector3 &out_pos, Vector3 &out_d
 
 	} else {
 		// TODO Have option to use viewport camera
-		Spatial *viewer = get_viewer();
+		Node3D *viewer = get_viewer();
 		if (viewer) {
 
 			Transform gt = viewer->get_global_transform();
@@ -702,7 +703,7 @@ void VoxelTerrain::get_viewer_pos_and_direction(Vector3 &out_pos, Vector3 &out_d
 		} else {
 
 			// TODO Just remember last viewer pos
-			out_pos = (_last_viewer_block_pos << _map->get_block_size_pow2()).to_vec3();
+			out_pos = _last_viewer_block_pos << _map->get_block_size_pow2();
 			out_direction = Vector3(0, -1, 0);
 		}
 	}
@@ -724,7 +725,7 @@ void VoxelTerrain::send_block_data_requests() {
 	}
 
 	for (unsigned int i = 0; i < _blocks_to_save.size(); ++i) {
-		print_line(String("Requesting save of block {0}").format(varray(_blocks_to_save[i].position.to_vec3())));
+		print_line(String("Requesting save of block {0}").format(varray(_blocks_to_save[i].position)));
 		input.blocks.push_back(_blocks_to_save[i]);
 	}
 
@@ -760,8 +761,8 @@ void VoxelTerrain::_process() {
 
 	// Find out which blocks need to appear and which need to be unloaded
 	{
-		Rect3i new_box = Rect3i::from_center_extents(viewer_block_pos, Vector3i(_view_distance_blocks));
-		Rect3i prev_box = Rect3i::from_center_extents(_last_viewer_block_pos, Vector3i(_last_view_distance_blocks));
+		Rect3i new_box = Rect3i::from_center_extents(viewer_block_pos, Vector3i_xyz(_view_distance_blocks));
+		Rect3i prev_box = Rect3i::from_center_extents(_last_viewer_block_pos, Vector3i_xyz(_last_view_distance_blocks));
 
 		if (prev_box != new_box) {
 			//print_line(String("Loaded area changed: from ") + prev_box.to_string() + String(" to ") + new_box.to_string());
@@ -835,7 +836,7 @@ void VoxelTerrain::_process() {
 				continue;
 			}
 
-			if (ob.data.voxels_loaded->get_size() != Vector3i(_map->get_block_size())) {
+			if (ob.data.voxels_loaded->get_size() != Vector3i_xyz(_map->get_block_size())) {
 				// Voxel block size is incorrect, drop it
 				ERR_PRINT("Block size obtained from stream is different from expected size");
 				++_stats.dropped_block_loads;
@@ -904,7 +905,7 @@ void VoxelTerrain::_process() {
 			// Smooth meshing works on more neighbors, so checking a single block isn't enough to ignore it,
 			// but that will slow down meshing a lot.
 			// TODO This is one reason to separate terrain systems between blocky and smooth (other reason is LOD)
-			if (! (_stream->get_used_channels_mask() & (1<<VoxelBuffer::CHANNEL_SDF))) {
+			if (!(_stream->get_used_channels_mask() & (1 << VoxelBuffer::CHANNEL_SDF))) {
 				VoxelBlock *block = _map->get_block(block_pos);
 				if (block == nullptr) {
 					continue;
@@ -946,10 +947,10 @@ void VoxelTerrain::_process() {
 			unsigned int block_size = _map->get_block_size();
 			unsigned int min_padding = _block_updater->get_minimum_padding();
 			unsigned int max_padding = _block_updater->get_maximum_padding();
-			nbuffer->create(Vector3i(block_size + min_padding + max_padding));
+			nbuffer->create(Vector3i_xyz(block_size + min_padding + max_padding));
 
 			unsigned int channels_mask = (1 << VoxelBuffer::CHANNEL_TYPE) | (1 << VoxelBuffer::CHANNEL_SDF);
-			_map->get_buffer_copy(_map->block_to_voxel(block_pos) - Vector3i(min_padding), **nbuffer, channels_mask);
+			_map->get_buffer_copy(_map->block_to_voxel(block_pos) - Vector3i_xyz(min_padding), **nbuffer, channels_mask);
 
 			VoxelMeshUpdater::InputBlock iblock;
 			iblock.data.voxels = nbuffer;
@@ -1027,7 +1028,7 @@ void VoxelTerrain::_process() {
 					collidable_surface = surface;
 				}
 
-				mesh->add_surface_from_arrays(data.blocky_surfaces.primitive_type, surface, Array(), data.blocky_surfaces.compression_flags);
+				mesh->add_surface_from_arrays(data.blocky_surfaces.primitive_type, surface, Array(), Dictionary(), data.blocky_surfaces.compression_flags);
 				mesh->surface_set_material(surface_index, _materials[i]);
 				++surface_index;
 			}
@@ -1048,7 +1049,7 @@ void VoxelTerrain::_process() {
 					collidable_surface = surface;
 				}
 
-				mesh->add_surface_from_arrays(data.smooth_surfaces.primitive_type, surface, Array(), data.smooth_surfaces.compression_flags);
+				mesh->add_surface_from_arrays(data.smooth_surfaces.primitive_type, surface, Array(), Dictionary(), data.smooth_surfaces.compression_flags);
 				mesh->surface_set_material(surface_index, _materials[i]);
 				++surface_index;
 			}
@@ -1072,7 +1073,7 @@ void VoxelTerrain::_process() {
 Ref<VoxelTool> VoxelTerrain::get_voxel_tool() {
 	Ref<VoxelTool> vt = memnew(VoxelToolTerrain(this, _map));
 	if (_stream.is_valid()) {
-		if(_stream->get_used_channels_mask() & (1<<VoxelBuffer::CHANNEL_SDF)) {
+		if (_stream->get_used_channels_mask() & (1 << VoxelBuffer::CHANNEL_SDF)) {
 			vt->set_channel(VoxelBuffer::CHANNEL_SDF);
 		} else {
 			vt->set_channel(VoxelBuffer::CHANNEL_TYPE);
@@ -1082,11 +1083,11 @@ Ref<VoxelTool> VoxelTerrain::get_voxel_tool() {
 }
 
 Vector3 VoxelTerrain::_b_voxel_to_block(Vector3 pos) {
-	return Vector3i(_map->voxel_to_block(pos)).to_vec3();
+	return _map->voxel_to_block(pos);
 }
 
 Vector3 VoxelTerrain::_b_block_to_voxel(Vector3 pos) {
-	return Vector3i(_map->block_to_voxel(pos)).to_vec3();
+	return _map->block_to_voxel(pos);
 }
 
 void VoxelTerrain::_bind_methods() {

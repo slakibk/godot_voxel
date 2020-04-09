@@ -65,8 +65,8 @@ int VoxelStreamFile::get_lod_count() const {
 	return 1;
 }
 
-Vector3 VoxelStreamFile::_get_block_size() const {
-	return Vector3i(1 << get_block_size_po2()).to_vec3();
+Vector3 VoxelStreamFile::_b_get_block_size() const {
+	return Vector3(Vector3i_xyz(1 << get_block_size_po2()));
 }
 
 void VoxelStreamFile::_bind_methods() {
@@ -77,7 +77,7 @@ void VoxelStreamFile::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fallback_stream", "stream"), &VoxelStreamFile::set_fallback_stream);
 	ClassDB::bind_method(D_METHOD("get_fallback_stream"), &VoxelStreamFile::get_fallback_stream);
 
-	ClassDB::bind_method(D_METHOD("get_block_size"), &VoxelStreamFile::_get_block_size);
+	ClassDB::bind_method(D_METHOD("get_block_size"), &VoxelStreamFile::_b_get_block_size);
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fallback_stream", PROPERTY_HINT_RESOURCE_TYPE, "VoxelStream"), "set_fallback_stream", "get_fallback_stream");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "save_fallback_output"), "set_save_fallback_output", "get_save_fallback_output");

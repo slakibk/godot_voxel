@@ -62,7 +62,7 @@ public:
 	}
 
 	String to_string() const {
-		return String("(o:{0}, s:{1})").format(varray(pos.to_vec3(), size.to_vec3()));
+		return String("(o:{0}, s:{1})").format(varray(pos, size));
 	}
 
 	bool intersects(Rect3i other) const {
@@ -190,9 +190,9 @@ public:
 
 	inline Rect3i downscaled(int step_size) const {
 		Rect3i o;
-		o.pos = pos.udiv(step_size);
-		Vector3i max_pos = (pos + size - Vector3i(1)).udiv(step_size);
-		o.size = max_pos - o.pos + Vector3i(1);
+		o.pos = udiv(pos, step_size);
+		Vector3i max_pos = udiv(pos + size - Vector3i(1, 1, 1), step_size);
+		o.size = max_pos - o.pos + Vector3i(1, 1, 1);
 		return o;
 	}
 

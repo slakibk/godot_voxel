@@ -186,7 +186,7 @@ private:
 
 		int lod_factor = get_lod_factor(lod);
 		int chunk_size = _base_size * lod_factor;
-		Vector3 world_center = static_cast<real_t>(chunk_size) * (node_pos.to_vec3() + Vector3(0.5, 0.5, 0.5));
+		Vector3 world_center = static_cast<real_t>(chunk_size) * (Vector3(node_pos) + Vector3(0.5, 0.5, 0.5));
 		float split_distance = chunk_size * _split_scale;
 		Node *node = get_node(node_index);
 

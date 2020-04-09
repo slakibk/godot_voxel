@@ -4,7 +4,7 @@
 #include <core/rid.h>
 #include <scene/resources/mesh.h>
 
-class World;
+class World3D;
 
 // Thin wrapper around VisualServer mesh instance API
 class DirectMeshInstance {
@@ -15,7 +15,7 @@ public:
 	bool is_valid() const;
 	void create();
 	void destroy();
-	void set_world(World *world);
+	void set_world(World3D *world);
 	void set_transform(Transform world_transform);
 	void set_mesh(Ref<Mesh> mesh);
 	void set_material_override(Ref<Material> material);

@@ -24,7 +24,7 @@ unsigned int VoxelBlockSerializer::get_size_in_bytes(const VoxelBuffer &buffer) 
 		switch (compression) {
 
 			case VoxelBuffer::COMPRESSION_NONE: {
-				size += size_in_voxels.volume() * sizeof(uint8_t);
+				size += get_volume(size_in_voxels) * sizeof(uint8_t);
 			} break;
 
 			case VoxelBuffer::COMPRESSION_UNIFORM: {

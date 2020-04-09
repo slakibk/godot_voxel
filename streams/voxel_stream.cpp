@@ -1,5 +1,6 @@
 #include "voxel_stream.h"
 #include "../voxel_string_names.h"
+#include <core/callable.h>
 #include <core/script_language.h>
 
 VoxelStream::VoxelStream() {
@@ -11,15 +12,15 @@ void VoxelStream::emerge_block(Ref<VoxelBuffer> out_buffer, Vector3i origin_in_v
 	if (script) {
 		// Call script to generate buffer
 		Variant arg1 = out_buffer;
-		Variant arg2 = origin_in_voxels.to_vec3();
+		Variant arg2 = origin_in_voxels;
 		Variant arg3 = lod;
 		const Variant *args[3] = { &arg1, &arg2, &arg3 };
-		Variant::CallError err;
+		Callable::CallError err;
 		script->call(VoxelStringNames::get_singleton()->emerge_block, args, 3, err);
-		ERR_FAIL_COND_MSG(err.error != Variant::CallError::CALL_OK,
+		ERR_FAIL_COND_MSG(err.error != Callable::CallError::CALL_OK,
 				"voxel_stream.cpp:emerge_block gave an error: " + String::num(err.error) +
 						", Argument: " + String::num(err.argument) +
-						", Expected type: " + Variant::get_type_name(err.expected));
+						", Expected type: " + Variant::get_type_name(Variant::Type(err.expected)));
 		// This had to be explicitely logged due to the usual GD debugger not working with threads
 	}
 }
@@ -30,15 +31,15 @@ void VoxelStream::immerge_block(Ref<VoxelBuffer> buffer, Vector3i origin_in_voxe
 	if (script) {
 		// Call script to save buffer
 		Variant arg1 = buffer;
-		Variant arg2 = origin_in_voxels.to_vec3();
+		Variant arg2 = origin_in_voxels;
 		Variant arg3 = lod;
 		const Variant *args[3] = { &arg1, &arg2, &arg3 };
-		Variant::CallError err;
+		Callable::CallError err;
 		script->call(VoxelStringNames::get_singleton()->immerge_block, args, 3, err);
-		ERR_FAIL_COND_MSG(err.error != Variant::CallError::CALL_OK,
+		ERR_FAIL_COND_MSG(err.error != Callable::CallError::CALL_OK,
 				"voxel_stream.cpp:immerge_block gave an error: " + String::num(err.error) +
 						" Argument: " + String::num(err.argument) +
-						" Expected type: " + Variant::get_type_name(err.expected));
+						" Expected type: " + Variant::get_type_name(Variant::Type(err.expected)));
 		// This had to be explicitely logged due to the usual GD debugger not working with threads
 	}
 }
@@ -81,13 +82,13 @@ int VoxelStream::get_used_channels_mask() const {
 	int mask = 0;
 	if (script) {
 		// Call script to get mask
-		Variant::CallError err;
+		Callable::CallError err;
 		//const Variant *args[3] = { &arg1, &arg2, &arg3 };
 		mask = script->call(VoxelStringNames::get_singleton()->get_used_channels_mask, NULL, 0, err);
-		ERR_FAIL_COND_V_MSG(err.error != Variant::CallError::CALL_OK, mask,
+		ERR_FAIL_COND_V_MSG(err.error != Callable::CallError::CALL_OK, mask,
 				"voxel_stream.cpp:get_used_channels_mask gave an error: " + String::num(err.error) +
 						" Argument: " + String::num(err.argument) +
-						" Expected type: " + Variant::get_type_name(err.expected));
+						" Expected type: " + Variant::get_type_name(Variant::Type(err.expected)));
 		// This had to be explicitely logged due to the usual GD debugger not working with threads
 	}
 	return mask;

@@ -5,6 +5,8 @@
 #include <core/hashfuncs.h>
 #include <core/math/vector3.h>
 
+#ifndef VECTOR3I_H
+
 struct Vector3i {
 
 	static const unsigned int AXIS_X = 0;
@@ -212,18 +214,6 @@ _FORCE_INLINE_ bool operator!=(const Vector3i &a, const Vector3i &b) {
 	return a.x != b.x || a.y != b.y || a.z != b.z;
 }
 
-_FORCE_INLINE_ Vector3i operator<<(const Vector3i &a, int b) {
-	return Vector3i(a.x << b, a.y << b, a.z << b);
-}
-
-_FORCE_INLINE_ Vector3i operator>>(const Vector3i &a, int b) {
-	return Vector3i(a.x >> b, a.y >> b, a.z >> b);
-}
-
-inline Vector3i operator%(const Vector3i &a, const Vector3i &b) {
-	return Vector3i(a.x % b.x, a.y % b.y, a.z % b.z);
-}
-
 _FORCE_INLINE_ bool operator<(const Vector3i &a, const Vector3i &b) {
 
 	if (a.x == b.x) {
@@ -239,6 +229,108 @@ _FORCE_INLINE_ bool operator<(const Vector3i &a, const Vector3i &b) {
 
 _FORCE_INLINE_ int Vector3i::distance_sq(const Vector3i &other) const {
 	return (other - *this).length_sq();
+}
+
+#else
+
+inline Vector3i operator<<(const Vector3i &a, int b) {
+	return Vector3i(a.x << b, a.y << b, a.z << b);
+}
+
+inline Vector3i operator>>(const Vector3i &a, int b) {
+	return Vector3i(a.x >> b, a.y >> b, a.z >> b);
+}
+
+inline Vector3i operator%(const Vector3i &a, const Vector3i &b) {
+	return Vector3i(a.x % b.x, a.y % b.y, a.z % b.z);
+}
+
+#endif
+
+// TODO May replace this by `Vector3i(v.floor())`, so can use Godot's cast
+inline Vector3i to_vec3i(Vector3 v) {
+	return Vector3i(Math::floor(v.x), Math::floor(v.y), Math::floor(v.z));
+}
+
+inline Vector3i Vector3i_xyz(int v) {
+	return Vector3i(v, v, v);
+}
+
+inline Vector3i udiv(const Vector3i v, const int d) {
+	return Vector3i(::udiv(v.x, d), ::udiv(v.y, d), ::udiv(v.z, d));
+}
+
+inline Vector3i udiv(const Vector3i v, const Vector3i d) {
+	return Vector3i(::udiv(v.x, d.x), ::udiv(v.y, d.y), ::udiv(v.z, d.z));
+}
+
+inline Vector3i wrap(const Vector3i v, const Vector3i d) {
+	return Vector3i(::wrap(v.x, d.x), ::wrap(v.y, d.y), ::wrap(v.z, d.z));
+}
+
+inline int get_volume(const Vector3i v) {
+	return v.x * v.y * v.z;
+}
+
+inline int get_length_sq(const Vector3i v) {
+	return v.x * v.y + v.y * v.y + v.z * v.z;
+}
+
+inline int get_distance_sq(const Vector3i a, const Vector3i b) {
+	return get_length_sq(b - a);
+}
+
+inline unsigned int get_zxy_index(const Vector3i p, const Vector3i area_size) {
+	return p.y + area_size.y * (p.x + area_size.x * p.z); // ZXY
+}
+
+inline Vector3i Vector3i_from_zxy_index(unsigned int i, const Vector3i area_size) {
+	Vector3i pos;
+	pos.y = i % area_size.y;
+	pos.x = (i / area_size.y) % area_size.x;
+	pos.z = i / (area_size.y * area_size.x);
+	return pos;
+}
+
+#define Vector3i_AXIS_COUNT 3
+
+// TODO Should move to math utils?
+inline void sort_min_max(int &a, int &b) {
+	if (a > b) {
+		int temp = a;
+		a = b;
+		b = temp;
+	}
+}
+
+inline void sort_min_max(Vector3i &a, Vector3i &b) {
+	sort_min_max(a.x, b.x);
+	sort_min_max(a.y, b.y);
+	sort_min_max(a.z, b.z);
+}
+
+// TODO Make this function do the same as clamp, for consistency
+// Clamps between min and max, where max is excluded
+inline void clamp_to(Vector3i &v, const Vector3i min, const Vector3i max) {
+	if (v.x < min.x) {
+		v.x = min.x;
+	}
+	if (v.y < min.y) {
+		v.y = min.y;
+	}
+	if (v.z < min.z) {
+		v.z = min.z;
+	}
+
+	if (v.x >= max.x) {
+		v.x = max.x - 1;
+	}
+	if (v.y >= max.y) {
+		v.y = max.y - 1;
+	}
+	if (v.z >= max.z) {
+		v.z = max.z - 1;
+	}
 }
 
 struct Vector3iHasher {

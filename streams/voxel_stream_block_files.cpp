@@ -38,7 +38,7 @@ void VoxelStreamBlockFiles::emerge_block(Ref<VoxelBuffer> out_buffer, Vector3i o
 
 	CRASH_COND(!_meta_loaded);
 
-	const Vector3i block_size(1 << _meta.block_size_po2);
+	const Vector3i block_size = Vector3i_xyz(1 << _meta.block_size_po2);
 
 	ERR_FAIL_COND(lod >= _meta.lod_count);
 	ERR_FAIL_COND(block_size != out_buffer->get_size());
@@ -107,7 +107,7 @@ void VoxelStreamBlockFiles::immerge_block(Ref<VoxelBuffer> buffer, Vector3i orig
 	}
 
 	// Check format
-	const Vector3i block_size = Vector3i(1 << _meta.block_size_po2);
+	const Vector3i block_size = Vector3i_xyz(1 << _meta.block_size_po2);
 	ERR_FAIL_COND(buffer->get_size() != block_size);
 	for (unsigned int channel_index = 0; channel_index < _meta.channel_depths.size(); ++channel_index) {
 		ERR_FAIL_COND(buffer->get_channel_depth(channel_index) != _meta.channel_depths[channel_index]);

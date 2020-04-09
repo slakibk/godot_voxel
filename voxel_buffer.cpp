@@ -323,10 +323,10 @@ void VoxelBuffer::fill(uint64_t defval, unsigned int channel_index) {
 void VoxelBuffer::fill_area(uint64_t defval, Vector3i min, Vector3i max, unsigned int channel_index) {
 	ERR_FAIL_INDEX(channel_index, MAX_CHANNELS);
 
-	Vector3i::sort_min_max(min, max);
+	sort_min_max(min, max);
 
-	min.clamp_to(Vector3i(0, 0, 0), _size + Vector3i(1, 1, 1));
-	max.clamp_to(Vector3i(0, 0, 0), _size + Vector3i(1, 1, 1));
+	clamp_to(min, Vector3i(0, 0, 0), _size + Vector3i(1, 1, 1));
+	clamp_to(max, Vector3i(0, 0, 0), _size + Vector3i(1, 1, 1));
 	Vector3i area_size = max - min;
 
 	if (area_size.x == 0 || area_size.y == 0 || area_size.z == 0) {
@@ -501,12 +501,12 @@ void VoxelBuffer::copy_from(const VoxelBuffer &other, Vector3i src_min, Vector3i
 		return;
 	}
 
-	Vector3i::sort_min_max(src_min, src_max);
+	sort_min_max(src_min, src_max);
 
-	src_min.clamp_to(Vector3i(0, 0, 0), other._size);
-	src_max.clamp_to(Vector3i(0, 0, 0), other._size + Vector3i(1, 1, 1));
+	clamp_to(src_min, Vector3i(0, 0, 0), other._size);
+	clamp_to(src_max, Vector3i(0, 0, 0), other._size + Vector3i(1, 1, 1));
 
-	dst_min.clamp_to(Vector3i(0, 0, 0), _size);
+	clamp_to(dst_min, Vector3i(0, 0, 0), _size);
 	Vector3i area_size = src_max - src_min;
 	//Vector3i dst_max = dst_min + area_size;
 
@@ -606,13 +606,13 @@ void VoxelBuffer::downscale_to(VoxelBuffer &dst, Vector3i src_min, Vector3i src_
 
 	// TODO Align input to multiple of two
 
-	src_min.clamp_to(Vector3i(), _size);
-	src_max.clamp_to(Vector3i(), _size + Vector3i(1));
+	clamp_to(src_min, Vector3i(), _size);
+	clamp_to(src_max, Vector3i(), _size + Vector3i(1, 1, 1));
 
 	Vector3i dst_max = dst_min + ((src_max - src_min) >> 1);
 
-	dst_min.clamp_to(Vector3i(), dst._size);
-	dst_max.clamp_to(Vector3i(), dst._size + Vector3i(1));
+	clamp_to(dst_min, Vector3i(), dst._size);
+	clamp_to(dst_max, Vector3i(), dst._size + Vector3i(1, 1, 1));
 
 	for (int channel_index = 0; channel_index < MAX_CHANNELS; ++channel_index) {
 
@@ -724,7 +724,6 @@ uint32_t VoxelBuffer::get_depth_bit_count(Depth d) {
 Ref<Image> VoxelBuffer::debug_print_sdf_to_image_top_down() {
 	Image *im = memnew(Image);
 	im->create(_size.x, _size.z, false, Image::FORMAT_RGB8);
-	im->lock();
 	Vector3i pos;
 	for (pos.z = 0; pos.z < _size.z; ++pos.z) {
 		for (pos.x = 0; pos.x < _size.x; ++pos.x) {
@@ -739,7 +738,6 @@ Ref<Image> VoxelBuffer::debug_print_sdf_to_image_top_down() {
 			im->set_pixel(pos.x, pos.z, Color(c, c, c));
 		}
 	}
-	im->unlock();
 	return Ref<Image>(im);
 }
 
@@ -797,10 +795,10 @@ void VoxelBuffer::_b_copy_channel_from(Ref<VoxelBuffer> other, unsigned int chan
 
 void VoxelBuffer::_b_copy_channel_from_area(Ref<VoxelBuffer> other, Vector3 src_min, Vector3 src_max, Vector3 dst_min, unsigned int channel) {
 	ERR_FAIL_COND(other.is_null());
-	copy_from(**other, Vector3i(src_min), Vector3i(src_max), Vector3i(dst_min), channel);
+	copy_from(**other, to_vec3i(src_min), to_vec3i(src_max), to_vec3i(dst_min), channel);
 }
 
 void VoxelBuffer::_b_downscale_to(Ref<VoxelBuffer> dst, Vector3 src_min, Vector3 src_max, Vector3 dst_min) const {
 	ERR_FAIL_COND(dst.is_null());
-	downscale_to(**dst, Vector3i(src_min), Vector3i(src_max), Vector3i(dst_min));
+	downscale_to(**dst, to_vec3i(src_min), to_vec3i(src_max), to_vec3i(dst_min));
 }

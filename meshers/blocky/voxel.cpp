@@ -5,7 +5,6 @@
 #define STRLEN(x) (sizeof(x) / sizeof(x[0]))
 
 Voxel::Voxel() :
-		_library(0),
 		_id(-1),
 		_material_id(0),
 		_is_transparent(false),
@@ -89,7 +88,7 @@ void Voxel::_get_property_list(List<PropertyInfo> *p_list) const {
 
 	if (_geometry_type == GEOMETRY_CUBE) {
 
-		p_list->push_back(PropertyInfo(Variant::REAL, "cube_geometry/padding_y"));
+		p_list->push_back(PropertyInfo(Variant::FLOAT, "cube_geometry/padding_y"));
 
 		p_list->push_back(PropertyInfo(Variant::VECTOR2, "cube_tiles/left"));
 		p_list->push_back(PropertyInfo(Variant::VECTOR2, "cube_tiles/right"));
@@ -174,7 +173,7 @@ Voxel::GeometryType Voxel::get_geometry_type() const {
 
 void Voxel::set_library(Ref<VoxelLibrary> lib) {
 	if (lib.is_null()) {
-		_library = 0;
+		_library = ObjectID();
 	} else {
 		_library = lib->get_instance_id();
 	}
@@ -185,14 +184,14 @@ void Voxel::set_library(Ref<VoxelLibrary> lib) {
 }
 
 VoxelLibrary *Voxel::get_library() const {
-	if (_library == 0) {
-		return NULL;
+	if (_library.is_null()) {
+		return nullptr;
 	}
 	Object *v = ObjectDB::get_instance(_library);
 	if (v) {
 		return Object::cast_to<VoxelLibrary>(v);
 	}
-	return NULL;
+	return nullptr;
 }
 
 void Voxel::set_custom_mesh(Ref<Mesh> mesh) {
@@ -209,10 +208,10 @@ void Voxel::set_custom_mesh(Ref<Mesh> mesh) {
 	}
 
 	Array arrays = mesh->surface_get_arrays(0);
-	PoolIntArray indices = arrays[Mesh::ARRAY_INDEX];
-	PoolVector3Array positions = arrays[Mesh::ARRAY_VERTEX];
-	PoolVector3Array normals = arrays[Mesh::ARRAY_NORMAL];
-	PoolVector2Array uvs = arrays[Mesh::ARRAY_TEX_UV];
+	Vector<int> indices = arrays[Mesh::ARRAY_INDEX];
+	Vector<Vector3> positions = arrays[Mesh::ARRAY_VERTEX];
+	Vector<Vector3> normals = arrays[Mesh::ARRAY_NORMAL];
+	Vector<Vector2> uvs = arrays[Mesh::ARRAY_TEX_UV];
 
 	ERR_FAIL_COND_MSG(indices.size() % 3 != 0, "Mesh is empty or does not contain triangles");
 	ERR_FAIL_COND(normals.size() == 0);
@@ -250,7 +249,7 @@ void Voxel::set_custom_mesh(Ref<Mesh> mesh) {
 
 	if (uvs.size() == 0) {
 		// TODO Properly generate UVs if there arent any
-		uvs = PoolVector2Array();
+		uvs = Vector<Vector2>();
 		uvs.resize(positions.size());
 	}
 
@@ -259,11 +258,6 @@ void Voxel::set_custom_mesh(Ref<Mesh> mesh) {
 	// Separate triangles belonging to faces of the cube
 
 	{
-		PoolIntArray::Read indices_read = indices.read();
-		PoolVector3Array::Read positions_read = positions.read();
-		PoolVector3Array::Read normals_read = normals.read();
-		PoolVector2Array::Read uvs_read = uvs.read();
-
 		FixedArray<HashMap<int, int>, Cube::SIDE_COUNT> added_side_indices;
 		HashMap<int, int> added_regular_indices;
 		FixedArray<Vector3, 3> tri_positions;
@@ -272,9 +266,9 @@ void Voxel::set_custom_mesh(Ref<Mesh> mesh) {
 
 			Cube::SideAxis side;
 
-			tri_positions[0] = positions_read[indices_read[i]];
-			tri_positions[1] = positions_read[indices_read[i + 1]];
-			tri_positions[2] = positions_read[indices_read[i + 2]];
+			tri_positions[0] = positions[indices[i]];
+			tri_positions[1] = positions[indices[i + 1]];
+			tri_positions[2] = positions[indices[i + 2]];
 
 			if (L::get_triangle_side(tri_positions[0], tri_positions[1], tri_positions[2], side)) {
 
@@ -283,7 +277,7 @@ void Voxel::set_custom_mesh(Ref<Mesh> mesh) {
 				int next_side_index = _model_side_positions[side].size();
 
 				for (int j = 0; j < 3; ++j) {
-					int src_index = indices_read[i + j];
+					int src_index = indices[i + j];
 					const int *existing_dst_index = added_side_indices[side].getptr(src_index);
 
 					if (existing_dst_index == nullptr) {
@@ -291,7 +285,7 @@ void Voxel::set_custom_mesh(Ref<Mesh> mesh) {
 
 						_model_side_indices[side].push_back(next_side_index);
 						_model_side_positions[side].push_back(tri_positions[j]);
-						_model_side_uvs[side].push_back(uvs_read[indices_read[i + j]]);
+						_model_side_uvs[side].push_back(uvs[indices[i + j]]);
 
 						added_side_indices[side].set(src_index, next_side_index);
 						++next_side_index;
@@ -308,15 +302,15 @@ void Voxel::set_custom_mesh(Ref<Mesh> mesh) {
 				int next_regular_index = _model_positions.size();
 
 				for (int j = 0; j < 3; ++j) {
-					int src_index = indices_read[i + j];
+					int src_index = indices[i + j];
 					const int *existing_dst_index = added_regular_indices.getptr(src_index);
 
 					if (existing_dst_index == nullptr) {
 
 						_model_indices.push_back(next_regular_index);
 						_model_positions.push_back(tri_positions[j]);
-						_model_normals.push_back(normals_read[indices_read[i + j]]);
-						_model_uvs.push_back(uvs_read[indices_read[i + j]]);
+						_model_normals.push_back(normals[indices[i + j]]);
+						_model_uvs.push_back(uvs[indices[i + j]]);
 
 						added_regular_indices.set(src_index, next_regular_index);
 						++next_regular_index;

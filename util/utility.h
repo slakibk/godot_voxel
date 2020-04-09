@@ -1,7 +1,6 @@
 #ifndef HEADER_VOXEL_UTILITY_H
 #define HEADER_VOXEL_UTILITY_H
 
-#include <core/pool_vector.h>
 #include <core/ustring.h>
 #include <core/vector.h>
 #include <scene/resources/mesh.h>
@@ -73,27 +72,14 @@ inline void unordered_remove_if(std::vector<T> &vec, F predicate) {
 //	vec.resize(j);
 //}
 
-template <typename T>
-void copy_to(PoolVector<T> &to, const Vector<T> &from) {
-
-	to.resize(from.size());
-
-	typename PoolVector<T>::Write w = to.write();
-
-	for (unsigned int i = 0; i < from.size(); ++i) {
-		w[i] = from[i];
-	}
-}
-
 inline String ptr2s(const void *p) {
 	return String::num_uint64((uint64_t)p, 16);
 }
 
 template <typename T>
-void raw_copy_to(PoolVector<T> &to, const std::vector<T> &from) {
+void raw_copy_to(Vector<T> &to, const std::vector<T> &from) {
 	to.resize(from.size());
-	typename PoolVector<T>::Write w = to.write();
-	memcpy(w.ptr(), from.data(), from.size() * sizeof(T));
+	memcpy(to.ptrw(), from.data(), from.size() * sizeof(T));
 }
 
 // TODO Move math funcs under math/ folder and wrap them in a namespace
@@ -130,15 +116,15 @@ inline T clamp(const T x, const T min_value, const T max_value) {
 	if (x < min_value) {
 		return min_value;
 	}
-	if (x >= max_value) {
+	if (x > max_value) {
 		return max_value;
 	}
 	return x;
 }
 
 inline bool is_surface_triangulated(Array surface) {
-	PoolVector3Array positions = surface[Mesh::ARRAY_VERTEX];
-	PoolIntArray indices = surface[Mesh::ARRAY_INDEX];
+	Vector<Vector3> positions = surface[Mesh::ARRAY_VERTEX];
+	Vector<int> indices = surface[Mesh::ARRAY_INDEX];
 	return positions.size() >= 3 && indices.size() >= 3;
 }
 

@@ -30,7 +30,6 @@ public:
 	void set_directory(String dirpath);
 
 	Vector3i get_region_size() const;
-	Vector3 get_region_size_v() const;
 	int get_region_size_po2() const;
 
 	int get_sector_size() const;
@@ -47,6 +46,8 @@ public:
 
 protected:
 	static void _bind_methods();
+
+	Vector3 _b_get_region_size() const;
 
 private:
 	struct CachedRegion;

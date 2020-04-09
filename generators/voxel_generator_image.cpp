@@ -45,8 +45,6 @@ void VoxelGeneratorImage::generate_block(VoxelBlockRequest &input) {
 	VoxelBuffer &out_buffer = **input.voxel_buffer;
 	Image &image = **_image;
 
-	image.lock();
-
 	if (_blur_enabled) {
 		VoxelGeneratorHeightmap::generate(out_buffer,
 				[&image](int x, int z) { return get_height_blurred(image, x, z); },
@@ -56,8 +54,6 @@ void VoxelGeneratorImage::generate_block(VoxelBlockRequest &input) {
 				[&image](int x, int z) { return get_height_repeat(image, x, z); },
 				input.origin_in_voxels, input.lod);
 	}
-
-	image.unlock();
 
 	out_buffer.compress_uniform_channels();
 }

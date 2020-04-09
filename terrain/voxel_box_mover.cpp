@@ -152,13 +152,13 @@ Vector3 VoxelBoxMover::get_motion(Vector3 pos, Vector3 motion, AABB aabb, VoxelT
 
 				const int type_id = voxels.get_voxel(i, 0);
 
-				if(library.has_voxel(type_id)) {
+				if (library.has_voxel(type_id)) {
 					const Voxel &voxel_type = library.get_voxel_const(type_id);
 					const std::vector<AABB> &local_boxes = voxel_type.get_collision_aabbs();
 
-					for(auto it = local_boxes.begin(); it != local_boxes.end(); ++it) {
+					for (auto it = local_boxes.begin(); it != local_boxes.end(); ++it) {
 						AABB world_box = *it;
-						world_box.position += i.to_vec3();
+						world_box.position += i;
 						potential_boxes.push_back(world_box);
 					}
 				}

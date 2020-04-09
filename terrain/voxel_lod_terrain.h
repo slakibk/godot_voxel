@@ -5,7 +5,7 @@
 #include "voxel_data_loader.h"
 #include "voxel_mesh_updater.h"
 #include <core/set.h>
-#include <scene/3d/spatial.h>
+#include <scene/3d/node_3d.h>
 
 class VoxelMap;
 class VoxelTool;
@@ -16,8 +16,8 @@ class VoxelBlock;
 // Designed for highest view distances, preferably using smooth voxels.
 // Voxels are polygonized around the viewer by distance in a very large sphere, usually extending beyond far clip.
 // Data is streamed using a VoxelStream, which must support LOD.
-class VoxelLodTerrain : public Spatial {
-	GDCLASS(VoxelLodTerrain, Spatial)
+class VoxelLodTerrain : public Node3D {
+	GDCLASS(VoxelLodTerrain, Node3D)
 public:
 	VoxelLodTerrain();
 	~VoxelLodTerrain();
@@ -89,7 +89,7 @@ protected:
 
 private:
 	unsigned int get_block_size() const;
-	Spatial *get_viewer() const;
+	Node3D *get_viewer() const;
 	void immerge_block(Vector3i block_pos, int lod_index);
 
 	void start_updater();
@@ -141,7 +141,7 @@ private:
 	std::vector<VoxelBlock *> _blocks_pending_transition_update;
 
 	Ref<Material> _material;
-	std::vector<Ref<ShaderMaterial> > _shader_material_pool;
+	std::vector<Ref<ShaderMaterial>> _shader_material_pool;
 
 	bool _generate_collisions = true;
 	int _collision_lod_count = -1;

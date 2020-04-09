@@ -3,11 +3,11 @@
 #include "../voxel_buffer.h"
 
 Vector3 VoxelRaycastResult::_b_get_position() const {
-	return position.to_vec3();
+	return position;
 }
 
 Vector3 VoxelRaycastResult::_b_get_previous_position() const {
-	return previous_position.to_vec3();
+	return previous_position;
 }
 
 void VoxelRaycastResult::_bind_methods() {
@@ -67,7 +67,7 @@ float VoxelTool::get_voxel_f(Vector3i pos) {
 }
 
 void VoxelTool::set_voxel(Vector3i pos, int v) {
-	Rect3i box(pos, Vector3i(1));
+	Rect3i box(pos, Vector3i(1, 1, 1));
 	if (!is_area_editable(box)) {
 		print_line("Area not editable");
 		return;
@@ -77,7 +77,7 @@ void VoxelTool::set_voxel(Vector3i pos, int v) {
 }
 
 void VoxelTool::set_voxel_f(Vector3i pos, float v) {
-	Rect3i box(pos, Vector3i(1));
+	Rect3i box(pos, Vector3i(1, 1, 1));
 	if (!is_area_editable(box)) {
 		print_line("Area not editable");
 		return;
@@ -87,7 +87,7 @@ void VoxelTool::set_voxel_f(Vector3i pos, float v) {
 }
 
 void VoxelTool::do_point(Vector3i pos) {
-	Rect3i box(pos, Vector3i(1));
+	Rect3i box(pos, Vector3i(1, 1, 1));
 	if (!is_area_editable(box)) {
 		return;
 	}
@@ -158,7 +158,7 @@ inline float sdf_blend(float src_value, float dst_value, VoxelTool::Mode mode) {
 
 void VoxelTool::do_sphere(Vector3 center, float radius) {
 
-	Rect3i box(Vector3i(center) - Vector3i(Math::floor(radius)), Vector3i(Math::ceil(radius) * 2));
+	Rect3i box(Vector3i(center.floor()) - Vector3i_xyz(Math::floor(radius)), Vector3i_xyz(Math::ceil(radius) * 2));
 
 	if (!is_area_editable(box)) {
 		print_line("Area not editable");
@@ -168,7 +168,7 @@ void VoxelTool::do_sphere(Vector3 center, float radius) {
 	if (_channel == VoxelBuffer::CHANNEL_SDF) {
 
 		box.for_each_cell([this, center, radius](Vector3i pos) {
-			float d = pos.to_vec3().distance_to(center) - radius;
+			float d = Vector3(pos).distance_to(center) - radius;
 			_set_voxel_f(pos, sdf_blend(d, get_voxel_f(pos), _mode));
 		});
 
@@ -177,7 +177,7 @@ void VoxelTool::do_sphere(Vector3 center, float radius) {
 		int value = _mode == MODE_REMOVE ? _eraser_value : _value;
 
 		box.for_each_cell([this, center, radius, value](Vector3i pos) {
-			float d = pos.to_vec3().distance_to(center);
+			float d = Vector3(pos).distance_to(center);
 			if (d <= radius) {
 				_set_voxel(pos, value);
 			}

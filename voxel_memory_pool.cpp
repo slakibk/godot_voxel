@@ -24,7 +24,6 @@ VoxelMemoryPool *VoxelMemoryPool::get_singleton() {
 }
 
 VoxelMemoryPool::VoxelMemoryPool() {
-	_mutex = Mutex::create();
 }
 
 VoxelMemoryPool::~VoxelMemoryPool() {
@@ -32,7 +31,6 @@ VoxelMemoryPool::~VoxelMemoryPool() {
 	debug_print();
 #endif
 	clear();
-	memdelete(_mutex);
 }
 
 uint8_t *VoxelMemoryPool::allocate(uint32_t size) {
