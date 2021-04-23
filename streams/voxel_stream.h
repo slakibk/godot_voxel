@@ -2,12 +2,17 @@
 #define VOXEL_STREAM_H
 
 #include "../generators/voxel_generator.h"
+#include "instance_data.h"
 #include "voxel_block_request.h"
 #include <core/resource.h>
 
 // Provides access to a source of paged voxel data, which may load and save.
 // This is intented for files, so it may run in a single background thread and gets requests in batches.
 // Must be implemented in a thread-safe way.
+//
+// Functions currently don't enforce querying blocks of the same size, however it is required for every stream to
+// support querying blocks the size of the declared block size, at positions matching their origins.
+// This might be restricted in the future, because there has been no compelling use case for that.
 //
 // If you are looking for a more specialized API to generate voxels with more threads, use VoxelGenerator.
 //
@@ -28,23 +33,37 @@ public:
 		_RESULT_COUNT
 	};
 
-	// TODO Rename load_block()
+	// TODO Deprecate
 	// Queries a block of voxels beginning at the given world-space voxel position and LOD.
 	// If you use LOD, the result at a given coordinate must always remain the same regardless of it.
 	// In other words, voxels values must solely depend on their coordinates or fixed parameters.
 	virtual Result emerge_block(Ref<VoxelBuffer> out_buffer, Vector3i origin_in_voxels, int lod);
 
-	// TODO Rename save_block()
+	// TODO Deprecate
 	virtual void immerge_block(Ref<VoxelBuffer> buffer, Vector3i origin_in_voxels, int lod);
 
+	// TODO Rename load_voxel_blocks
+	// TODO Pass with ArraySlice
 	// Note: vector is passed by ref for performance. Don't reorder it.
 	virtual void emerge_blocks(Vector<VoxelBlockRequest> &p_blocks, Vector<Result> &out_results);
 
+	// TODO Rename save_voxel_blocks
+	// TODO Pass with ArraySlice
 	// Returns multiple blocks of voxels to the stream.
 	// This function is recommended if you save to files, because you can batch their access.
 	virtual void immerge_blocks(const Vector<VoxelBlockRequest> &p_blocks);
 
-	// Declares the format expected from this stream
+	virtual bool supports_instance_blocks() const;
+
+	virtual void load_instance_blocks(
+			ArraySlice<VoxelStreamInstanceDataRequest> out_blocks, ArraySlice<Result> out_results);
+
+	virtual void save_instance_blocks(ArraySlice<VoxelStreamInstanceDataRequest> p_blocks);
+
+	// Tells which channels can be found in this stream.
+	// The simplest implementation is to return them all.
+	// One reason to specify which channels are available is to help the editor detect configuration issues,
+	// and to avoid saving some of the channels if only specific ones are meant to be saved.
 	virtual int get_used_channels_mask() const;
 
 	// Gets which block size this stream will provide, as a power of two.
@@ -72,7 +91,7 @@ private:
 	};
 
 	Parameters _parameters;
-	RWLock *_parameters_lock = nullptr;
+	RWLock _parameters_lock;
 };
 
 VARIANT_ENUM_CAST(VoxelStream::Result);

@@ -1,7 +1,7 @@
 #include "voxel_mesher_transvoxel.h"
 #include "../../storage/voxel_buffer.h"
+#include "../../util/funcs.h"
 #include "transvoxel_tables.cpp"
-#include <core/os/os.h>
 
 namespace {
 static const unsigned int MESH_COMPRESSION_FLAGS =
@@ -245,11 +245,11 @@ inline Vector3i dir_to_prev_vec(uint8_t dir) {
 }
 
 inline float get_sample(uint8_t v) {
-	return VoxelBuffer::u8_to_real(v);
+	return VoxelBuffer::u8_to_norm(v);
 }
 
 inline float get_sample(uint16_t v) {
-	return VoxelBuffer::u16_to_real(v);
+	return VoxelBuffer::u16_to_norm(v);
 }
 
 inline float get_sample(float v) {

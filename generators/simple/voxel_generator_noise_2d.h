@@ -20,6 +20,9 @@ public:
 	void generate_block(VoxelBlockRequest &input) override;
 
 private:
+	void _on_noise_changed();
+	void _on_curve_changed();
+
 	static void _bind_methods();
 
 private:
@@ -32,7 +35,7 @@ private:
 	};
 
 	Parameters _parameters;
-	RWLock *_parameters_lock;
+	RWLock _parameters_lock;
 };
 
 #endif // VOXEL_GENERATOR_NOISE_2D_H

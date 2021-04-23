@@ -3,12 +3,12 @@ Changelog
 
 This is a high-level list of features, changes and fixes that have been made over time.
 
-At the moment, this module doesn't have a distinct release schedule, so this changelog follows Godot's version numbers and binary releases. Almost each version mentionned here should have an associated Git branch containing features at the time of the version. Backports aren't done so far.
+At the moment, this module doesn't have a distinct release schedule, so this changelog follows Godot's version numbers and binary releases. Almost each version mentionned here should have an associated Git branch (for THIS repo, not Godot's) containing features at the time of the version. Backports aren't done so far.
 
 Semver is not yet in place, so each version can have breaking changes, although it shouldn't happen often.
 
-Ongoing development - `master`
---------------------------------
+Ongoing development
+--------------------
 
 - General
     - Introduction of Voxel Server, which shares threaded tasks among all voxel nodes
@@ -19,6 +19,9 @@ Ongoing development - `master`
     - Meshers are now resources so you can choose and configure them per terrain
     - Added [FastNoiseLite](https://github.com/Auburn/FastNoise) for a wider variety of noises
     - Generators are no longer limited to a single background thread
+    - Added `VoxelStreamSQLite`, allowing to save volumes as a single SQLite database
+    - Implemented `copy` and `paste` for `VoxelToolTerrain`
+    - Added ability to double block size used for meshes and instancing, improving rendering speed at the cost of slower modification
 
 - Editor
     - Streaming/LOD can be set to follow the editor camera instead of being centered on world origin. Use with caution, fast big movements and zooms can cause lag
@@ -30,13 +33,19 @@ Ongoing development - `master`
     - Transvoxel runs faster (almost x2 speedup)
     - The SDF channel is now 16-bit by default instead of 8-bit, which reduces terracing in big terrains
     - Optimized `VoxelGeneratorGraph` by making it detect empty blocks more accurately and process by buffers
+    - `VoxelGeneratorGraph` now exposes performance tuning parameters
     - Added `SdfSphereHeightmap` and `Normalize` nodes to voxel graph, which can help making planets
+    - Added `SdfSmoothUnion` and `SdfSmoothSubtract` nodes to voxel graph
+    - Added `VoxelInstancer` to instantiate items on top of `VoxelLodTerrain`, aimed at spawning natural elements such as rocks and foliage
+    - Implemented `VoxelToolLodterrain.raycast()`
+    - Added experimental API for LOD fading, with some limitations.
 
 - Blocky voxels
     - Introduced a second blocky mesher dedicated to colored cubes, with greedy meshing and palette support
     - Replaced `transparent` property with `transparency_index` for more control on the culling of transparent faces
     - The TYPE channel is now 16-bit by default instead of 8-bit, allowing to store up to 65,536 types (part of this channel might actually be used to store rotation in the future)
     - Added normalmaps support
+    - `VoxelRaycastResult` now also contains hit distance, so it is possible to determine the exact hit position
 
 - Breaking changes
     - `VoxelViewer` now replaces the `viewer_path` property on `VoxelTerrain`, and allows multiple loading points
@@ -47,6 +56,9 @@ Ongoing development - `master`
     - Generators and streams have been split. Streams are more dedicated to files and use a single background thread. Generators are dedicated to generation and can be used by more than one background thread. Terrains have one property for each.
     - The meshing system no longer "guesses" how voxels will look like. Instead it uses the mesher assigned to the terrain.
     - SDF and TYPE channels have different default depth, so if you relied on 8-bit depth, you may have to explicitely set that format in your generator, to avoid mismatch with existing savegames
+    - The block serialization format has changed, and migration is not implemented, so old saves using it cannot be used. See documentation for more information.
+    - Terrains no longer auto-save when they are destroyed while having a `stream` assigned. You have to call `save_modified_blocks()` explicitely before doing that.
+    - `VoxelLodTerrain.lod_split_scale` has been replaced with `lod_distance` for clarity. It is the distance from the viewer where the first LOD level may extend. 
 
 - Fixes
     - C# should be able to properly implement generator/stream functions

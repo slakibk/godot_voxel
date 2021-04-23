@@ -1,10 +1,10 @@
 #ifndef VOXEL_BUFFER_H
 #define VOXEL_BUFFER_H
 
-#include "../math/rect3i.h"
+#include "../constants/voxel_constants.h"
 #include "../util/array_slice.h"
 #include "../util/fixed_array.h"
-#include "../voxel_constants.h"
+#include "../util/math/rect3i.h"
 
 #include <core/map.h>
 #include <core/reference.h>
@@ -13,7 +13,6 @@
 class VoxelTool;
 class Image;
 class FuncRef;
-class RWLock;
 
 // Dense voxels data storage.
 // Organized in channels of configurable bit depth.
@@ -54,6 +53,8 @@ public:
 	};
 
 	static const Depth DEFAULT_CHANNEL_DEPTH = DEPTH_8_BIT;
+	static const Depth DEFAULT_TYPE_CHANNEL_DEPTH = DEPTH_16_BIT;
+	static const Depth DEFAULT_SDF_CHANNEL_DEPTH = DEPTH_16_BIT;
 
 	// Limit was made explicit for serialization reasons, and also because there must be a reasonable one
 	static const uint32_t MAX_SIZE = 65535;
@@ -86,6 +87,7 @@ public:
 
 	void fill(uint64_t defval, unsigned int channel_index = 0);
 	void fill_area(uint64_t defval, Vector3i min, Vector3i max, unsigned int channel_index = 0);
+	void fill_area_f(float fvalue, Vector3i min, Vector3i max, unsigned int channel_index);
 	void fill_f(real_t value, unsigned int channel = 0);
 
 	bool is_uniform(unsigned int channel_index) const;
@@ -96,11 +98,58 @@ public:
 
 	static uint32_t get_size_in_bytes_for_volume(Vector3i size, Depth depth);
 
+	void copy_format(const VoxelBuffer &other);
+
+	// Specialized copy functions.
 	// Note: these functions don't include metadata on purpose.
 	// If you also want to copy metadata, use the specialized functions.
 	void copy_from(const VoxelBuffer &other);
 	void copy_from(const VoxelBuffer &other, unsigned int channel_index);
-	void copy_from(const VoxelBuffer &other, Vector3i src_min, Vector3i src_max, Vector3i dst_min, unsigned int channel_index);
+	void copy_from(const VoxelBuffer &other, Vector3i src_min, Vector3i src_max, Vector3i dst_min,
+			unsigned int channel_index);
+
+	// Executes a read-write action on all cells of the provided box that intersect with this buffer.
+	// `action_func` receives a voxel value from the channel, and returns a modified value.
+	// if the returned value is different, it will be applied to the buffer.
+	// Can be used to blend voxels together.
+	template <typename F>
+	inline void read_write_action(Rect3i box, unsigned int channel_index, F action_func) {
+		ERR_FAIL_INDEX(channel_index, MAX_CHANNELS);
+
+		box.clip(Rect3i(Vector3i(), _size));
+		Vector3i min_pos = box.pos;
+		Vector3i max_pos = box.pos + box.size;
+		Vector3i pos;
+		for (pos.z = min_pos.z; pos.z < max_pos.z; ++pos.z) {
+			for (pos.x = min_pos.x; pos.x < max_pos.x; ++pos.x) {
+				for (pos.y = min_pos.y; pos.y < max_pos.y; ++pos.y) {
+					// TODO Optimization: a bunch of checks and branching could be skipped
+					const uint64_t v0 = get_voxel(pos, channel_index);
+					const uint64_t v1 = action_func(pos, v0);
+					if (v0 != v1) {
+						set_voxel(v1, pos, channel_index);
+					}
+				}
+			}
+		}
+	}
+
+	static inline FixedArray<uint8_t, MAX_CHANNELS> mask_to_channels_list(
+			uint8_t channels_mask, unsigned int &out_count) {
+
+		FixedArray<uint8_t, VoxelBuffer::MAX_CHANNELS> channels;
+		unsigned int channel_count = 0;
+
+		for (unsigned int channel_index = 0; channel_index < VoxelBuffer::MAX_CHANNELS; ++channel_index) {
+			if (((1 << channel_index) & channels_mask) != 0) {
+				channels[channel_count] = channel_index;
+				++channel_count;
+			}
+		}
+
+		out_count = channel_count;
+		return channels;
+	}
 
 	Ref<VoxelBuffer> duplicate(bool include_metadata) const;
 
@@ -144,13 +193,45 @@ public:
 	Depth get_channel_depth(unsigned int channel_index) const;
 	static uint32_t get_depth_bit_count(Depth d);
 
-	static inline float u8_to_real(uint8_t v) {
-		return (static_cast<real_t>(v) - 0x7f) * VoxelConstants::INV_0x7f;
+	// When using lower than 32-bit resolution for terrain signed distance fields,
+	// it should be scaled to better fit the range of represented values since the storage is normalized to -1..1.
+	// This returns that scale for a given depth configuration.
+	static float get_sdf_quantization_scale(Depth d);
+
+	// TODO Switch to using GPU format inorm16 for these conversions
+	// The current ones seem to work but aren't really correct
+
+	static inline float u8_to_norm(uint8_t v) {
+		return (static_cast<float>(v) - 0x7f) * VoxelConstants::INV_0x7f;
 	}
 
-	static inline float u16_to_real(uint16_t v) {
-		return (static_cast<real_t>(v) - 0x7fff) * VoxelConstants::INV_0x7fff;
+	static inline float u16_to_norm(uint16_t v) {
+		return (static_cast<float>(v) - 0x7fff) * VoxelConstants::INV_0x7fff;
 	}
+
+	static inline uint8_t norm_to_u8(float v) {
+		return clamp(static_cast<int>(128.f * v + 128.f), 0, 0xff);
+	}
+
+	static inline uint16_t norm_to_u16(float v) {
+		return clamp(static_cast<int>(0x8000 * v + 0x8000), 0, 0xffff);
+	}
+
+	/*static inline float quantized_u8_to_real(uint8_t v) {
+		return u8_to_norm(v) * VoxelConstants::QUANTIZED_SDF_8_BITS_SCALE_INV;
+	}
+
+	static inline float quantized_u16_to_real(uint8_t v) {
+		return u8_to_norm(v) * VoxelConstants::QUANTIZED_SDF_16_BITS_SCALE_INV;
+	}
+
+	static inline uint8_t real_to_quantized_u8(float v) {
+		return norm_to_u8(v * VoxelConstants::QUANTIZED_SDF_8_BITS_SCALE);
+	}
+
+	static inline uint16_t real_to_quantized_u16(float v) {
+		return norm_to_u16(v * VoxelConstants::QUANTIZED_SDF_16_BITS_SCALE);
+	}*/
 
 	// Metadata
 
@@ -169,30 +250,8 @@ public:
 
 	// Internal synchronization.
 	// This lock is optional, and used internally at the moment, only in multithreaded areas.
-	inline const RWLock *get_lock() const { return _rw_lock; }
-	inline RWLock *get_lock() { return _rw_lock; }
-
-	// TODO Make this work, would be awesome for perf
-	//
-	//	template <typename F>
-	//	void read_write_action(Rect3i box, Vector3i offset, unsigned int channel_index, F f) {
-	//		ERR_FAIL_INDEX(channel_index, MAX_CHANNELS);
-	//		box.clip(Rect3i(Vector3i(), _size));
-	//		Vector3i min_pos = box.pos;
-	//		Vector3i max_pos = box.pos + box.size;
-	//		Vector3i pos;
-	//		for (pos.z = min_pos.z; pos.z < max_pos.z; ++pos.z) {
-	//			for (pos.x = min_pos.x; pos.x < max_pos.x; ++pos.x) {
-	//				for (pos.y = min_pos.y; pos.y < max_pos.y; ++pos.y) {
-	//					int v0 = get_voxel(pos, channel_index);
-	//					int v1 = f(pos + offset, v0);
-	//					if (v0 != v1) {
-	//						set_voxel(v1, pos, channel_index);
-	//					}
-	//				}
-	//			}
-	//		}
-	//	}
+	inline const RWLock &get_lock() const { return _rw_lock; }
+	inline RWLock &get_lock() { return _rw_lock; }
 
 	// Debugging
 
@@ -250,7 +309,7 @@ private:
 	Variant _block_metadata;
 	Map<Vector3i, Variant> _voxel_metadata;
 
-	RWLock *_rw_lock;
+	RWLock _rw_lock;
 };
 
 VARIANT_ENUM_CAST(VoxelBuffer::ChannelId)

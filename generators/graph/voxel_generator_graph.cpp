@@ -10,12 +10,10 @@ const char *VoxelGeneratorGraph::SIGNAL_NODE_NAME_CHANGED = "node_name_changed";
 thread_local VoxelGeneratorGraph::Cache VoxelGeneratorGraph::_cache;
 
 VoxelGeneratorGraph::VoxelGeneratorGraph() {
-	_runtime_lock = RWLock::create();
 }
 
 VoxelGeneratorGraph::~VoxelGeneratorGraph() {
 	clear();
-	memdelete(_runtime_lock);
 }
 
 void VoxelGeneratorGraph::clear() {
@@ -190,8 +188,56 @@ PoolIntArray VoxelGeneratorGraph::get_node_ids() const {
 	return _graph.get_node_ids();
 }
 
+bool VoxelGeneratorGraph::is_using_optimized_execution_map() const {
+	return _use_optimized_execution_map;
+}
+
+void VoxelGeneratorGraph::set_use_optimized_execution_map(bool use) {
+	_use_optimized_execution_map = use;
+}
+
+float VoxelGeneratorGraph::get_sdf_clip_threshold() const {
+	return _sdf_clip_threshold;
+}
+
+void VoxelGeneratorGraph::set_sdf_clip_threshold(float t) {
+	_sdf_clip_threshold = max(t, 0.f);
+}
+
 int VoxelGeneratorGraph::get_used_channels_mask() const {
 	return 1 << VoxelBuffer::CHANNEL_SDF;
+}
+
+void VoxelGeneratorGraph::set_use_subdivision(bool use) {
+	_use_subdivision = use;
+}
+
+bool VoxelGeneratorGraph::is_using_subdivision() const {
+	return _use_subdivision;
+}
+
+void VoxelGeneratorGraph::set_subdivision_size(int size) {
+	_subdivision_size = size;
+}
+
+int VoxelGeneratorGraph::get_subdivision_size() const {
+	return _subdivision_size;
+}
+
+void VoxelGeneratorGraph::set_debug_clipped_blocks(bool enabled) {
+	_debug_clipped_blocks = enabled;
+}
+
+bool VoxelGeneratorGraph::is_debug_clipped_blocks() const {
+	return _debug_clipped_blocks;
+}
+
+void VoxelGeneratorGraph::set_use_xz_caching(bool enabled) {
+	_use_xz_caching = enabled;
+}
+
+bool VoxelGeneratorGraph::is_using_xz_caching() const {
+	return _use_xz_caching;
 }
 
 void VoxelGeneratorGraph::generate_block(VoxelBlockRequest &input) {
@@ -211,58 +257,28 @@ void VoxelGeneratorGraph::generate_block(VoxelBlockRequest &input) {
 	const VoxelBuffer::ChannelId channel = VoxelBuffer::CHANNEL_SDF;
 	const Vector3i origin = input.origin_in_voxels;
 
-	const Vector3i rmin;
-	const Vector3i rmax = bs;
-	const Vector3i gmin = origin;
-	const Vector3i gmax = origin + (bs << input.lod);
-
 	// TODO This may be shared across the module
 	// Storing voxels is lossy on some depth configurations. They use normalized SDF,
 	// so we must scale the values to make better use of the offered resolution
-	float sdf_scale;
-	switch (out_buffer.get_channel_depth(VoxelBuffer::CHANNEL_SDF)) {
-		// Normalized
-		case VoxelBuffer::DEPTH_8_BIT:
-			sdf_scale = 0.1f;
-			break;
-		case VoxelBuffer::DEPTH_16_BIT:
-			sdf_scale = 0.002f;
-			break;
-		// Direct
-		case VoxelBuffer::DEPTH_32_BIT:
-			sdf_scale = 1.0f;
-			break;
-		case VoxelBuffer::DEPTH_64_BIT:
-			sdf_scale = 1.0f;
-			break;
-		default:
-			CRASH_NOW();
-			break;
-	}
+	const float sdf_scale = VoxelBuffer::get_sdf_quantization_scale(
+			out_buffer.get_channel_depth(out_buffer.get_channel_depth(channel)));
+
+	const int stride = 1 << input.lod;
+
+	// Clip threshold must be higher for higher lod indexes because distances for one sampled voxel are also larger
+	const float clip_threshold = sdf_scale * _sdf_clip_threshold * stride;
+
+	// TODO Allow non-cubic block size when not using subdivision
+	const int section_size = _use_subdivision ? _subdivision_size : min(min(bs.x, bs.y), bs.z);
+	// Block size must be a multiple of section size
+	ERR_FAIL_COND(bs.x % section_size != 0);
+	ERR_FAIL_COND(bs.y % section_size != 0);
+	ERR_FAIL_COND(bs.z % section_size != 0);
 
 	Cache &cache = _cache;
 
-	const unsigned int slice_buffer_size = bs.x * bs.y;
+	const unsigned int slice_buffer_size = section_size * section_size;
 	runtime->prepare_state(cache.state, slice_buffer_size);
-
-	// TODO Add subdivide option so we can fine tune the analysis
-
-	const Interval range = runtime->analyze_range(cache.state, gmin, gmax) * sdf_scale;
-	const float clip_threshold = sdf_scale * 0.2f;
-	if (range.min > clip_threshold && range.max > clip_threshold) {
-		out_buffer.clear_channel_f(VoxelBuffer::CHANNEL_SDF, 1.f);
-		// DEBUG: use this instead to fill optimized-out blocks with matter, making them stand out
-		//out_buffer.clear_channel_f(VoxelBuffer::CHANNEL_SDF, -1.f);
-		return;
-
-	} else if (range.min < -clip_threshold && range.max < -clip_threshold) {
-		out_buffer.clear_channel_f(VoxelBuffer::CHANNEL_SDF, -1.f);
-		return;
-
-	} else if (range.is_single_value()) {
-		out_buffer.clear_channel_f(VoxelBuffer::CHANNEL_SDF, range.min);
-		return;
-	}
 
 	cache.slice_cache.resize(slice_buffer_size);
 	ArraySlice<float> slice_cache(cache.slice_cache, 0, cache.slice_cache.size());
@@ -275,32 +291,73 @@ void VoxelGeneratorGraph::generate_block(VoxelBlockRequest &input) {
 	ArraySlice<float> y_cache(cache.y_cache, 0, cache.y_cache.size());
 	ArraySlice<float> z_cache(cache.z_cache, 0, cache.z_cache.size());
 
-	const int stride = 1 << input.lod;
+	const float air_sdf = _debug_clipped_blocks ? -1.f : 1.f;
+	const float matter_sdf = _debug_clipped_blocks ? 1.f : -1.f;
 
-	{
-		unsigned int i = 0;
-		for (int rz = rmin.z, gz = gmin.z; rz < rmax.z; ++rz, gz += stride) {
-			for (int rx = rmin.x, gx = gmin.x; rx < rmax.x; ++rx, gx += stride) {
-				x_cache[i] = gx;
-				z_cache[i] = gz;
-				++i;
-			}
-		}
-	}
+	// For each subdivision of the block
+	for (int sz = 0; sz < bs.z; sz += section_size) {
+		for (int sy = 0; sy < bs.y; sy += section_size) {
+			for (int sx = 0; sx < bs.x; sx += section_size) {
+				VOXEL_PROFILE_SCOPE_NAMED("Section");
 
-	for (int ry = rmin.y, gy = gmin.y; ry < rmax.y; ++ry, gy += (1 << input.lod)) {
-		VOXEL_PROFILE_SCOPE();
+				const Vector3i rmin(sx, sy, sz);
+				const Vector3i rmax = rmin + Vector3i(section_size);
+				const Vector3i gmin = origin + (rmin << input.lod);
+				const Vector3i gmax = origin + (rmax << input.lod);
 
-		y_cache.fill(gy);
+				const Interval range = runtime->analyze_range(cache.state, gmin, gmax) * sdf_scale;
+				if (range.min > clip_threshold && range.max > clip_threshold) {
+					out_buffer.fill_area_f(air_sdf, rmin, rmax, channel);
+					continue;
 
-		runtime->generate_set(cache.state, x_cache, y_cache, z_cache, slice_cache, ry != rmin.y);
+				} else if (range.min < -clip_threshold && range.max < -clip_threshold) {
+					out_buffer.fill_area_f(matter_sdf, rmin, rmax, channel);
+					continue;
 
-		// TODO Flatten this further
-		unsigned int i = 0;
-		for (int rz = rmin.z; rz < rmax.z; ++rz) {
-			for (int rx = rmin.x; rx < rmax.x; ++rx) {
-				out_buffer.set_voxel_f(sdf_scale * slice_cache[i], rx, ry, rz, channel);
-				++i;
+				} else if (range.is_single_value()) {
+					out_buffer.fill_area_f(range.min, rmin, rmax, channel);
+					continue;
+				}
+
+				// The section may have the surface in it, we have to calculate it
+
+				if (_use_optimized_execution_map) {
+					// Optimize out branches of the graph that won't contribute to the result
+					runtime->generate_optimized_execution_map(cache.state, false);
+				}
+
+				{
+					unsigned int i = 0;
+					for (int rz = rmin.z, gz = gmin.z; rz < rmax.z; ++rz, gz += stride) {
+						for (int rx = rmin.x, gx = gmin.x; rx < rmax.x; ++rx, gx += stride) {
+							x_cache[i] = gx;
+							z_cache[i] = gz;
+							++i;
+						}
+					}
+				}
+
+				for (int ry = rmin.y, gy = gmin.y; ry < rmax.y; ++ry, gy += stride) {
+					VOXEL_PROFILE_SCOPE_NAMED("Slice");
+
+					y_cache.fill(gy);
+
+					// TODO Option to disable Y dependency caching
+					runtime->generate_set(cache.state, x_cache, y_cache, z_cache, slice_cache,
+							_use_xz_caching && ry != rmin.y, _use_optimized_execution_map);
+
+					// TODO Flatten this further
+					{
+						VOXEL_PROFILE_SCOPE_NAMED("Copy to block");
+						unsigned int i = 0;
+						for (int rz = rmin.z; rz < rmax.z; ++rz) {
+							for (int rx = rmin.x; rx < rmax.x; ++rx) {
+								out_buffer.set_voxel_f(sdf_scale * slice_cache[i], rx, ry, rz, channel);
+								++i;
+							}
+						}
+					}
+				}
 			}
 		}
 	}
@@ -333,17 +390,26 @@ void VoxelGeneratorGraph::generate_set(ArraySlice<float> in_x, ArraySlice<float>
 	ERR_FAIL_COND(_runtime == nullptr || !_runtime->has_output());
 	Cache &cache = _cache;
 	_runtime->prepare_state(cache.state, in_x.size());
-	_runtime->generate_set(cache.state, in_x, in_y, in_z, out_sdf, false);
+	_runtime->generate_set(cache.state, in_x, in_y, in_z, out_sdf, false, false);
 }
 
 const VoxelGraphRuntime::State &VoxelGeneratorGraph::get_last_state_from_current_thread() {
 	return _cache.state;
 }
 
-uint32_t VoxelGeneratorGraph::get_output_port_address(ProgramGraph::PortLocation port) const {
+bool VoxelGeneratorGraph::try_get_output_port_address(ProgramGraph::PortLocation port, uint32_t &out_address) const {
 	RWLockRead rlock(_runtime_lock);
-	ERR_FAIL_COND_V(_runtime == nullptr || !_runtime->has_output(), 0);
-	return _runtime->get_output_port_address(port);
+	ERR_FAIL_COND_V(_runtime == nullptr || !_runtime->has_output(), false);
+	uint16_t addr;
+	const bool res = _runtime->try_get_output_port_address(port, addr);
+	out_address = addr;
+	return res;
+}
+
+void VoxelGeneratorGraph::find_dependencies(uint32_t node_id, std::vector<uint32_t> &out_dependencies) const {
+	std::vector<uint32_t> dst;
+	dst.push_back(node_id);
+	_graph.find_dependencies(dst, out_dependencies);
 }
 
 inline Vector3 get_3d_pos_from_panorama_uv(Vector2 uv) {
@@ -354,6 +420,29 @@ inline Vector3 get_3d_pos_from_panorama_uv(Vector2 uv) {
 	const float x = Math::cos(xa) * ca;
 	const float z = Math::sin(xa) * ca;
 	return Vector3(x, y, z);
+}
+
+// Subdivides a rectangle in square chunks and runs a function on each of them.
+// The ref is important to allow re-using functors.
+template <typename F>
+inline void for_chunks_2d(int w, int h, int chunk_size, F &f) {
+	const int chunks_x = w / chunk_size;
+	const int chunks_y = h / chunk_size;
+
+	const int last_chunk_width = w % chunk_size;
+	const int last_chunk_height = h % chunk_size;
+
+	for (int cy = 0; cy < chunks_y; ++cy) {
+		int ry = cy * chunk_size;
+		int rh = ry + chunk_size > h ? last_chunk_height : chunk_size;
+
+		for (int cx = 0; cx < chunks_x; ++cx) {
+			int rx = cx * chunk_size;
+			int rw = ry + chunk_size > w ? last_chunk_width : chunk_size;
+
+			f(rx, ry, rw, rh);
+		}
+	}
 }
 
 void VoxelGeneratorGraph::bake_sphere_bumpmap(Ref<Image> im, float ref_radius, float sdf_min, float sdf_max) {
@@ -367,35 +456,88 @@ void VoxelGeneratorGraph::bake_sphere_bumpmap(Ref<Image> im, float ref_radius, f
 
 	ERR_FAIL_COND(runtime == nullptr || !runtime->has_output());
 
-	Cache &cache = _cache;
-	// TODO Need to convert this to buffers instead of using single queries
-	runtime->prepare_state(cache.state, 1);
+	// This process would use too much memory if run over the entire image at once,
+	// so we'll subdivide the load in smaller chunks
+	struct ProcessChunk {
+		std::vector<float> x_coords;
+		std::vector<float> y_coords;
+		std::vector<float> z_coords;
+		std::vector<float> sdf_values;
+		Ref<Image> im;
+		std::shared_ptr<const VoxelGraphRuntime> runtime;
+		VoxelGraphRuntime::State &state;
+		const float ref_radius;
+		const float sdf_min;
+		const float sdf_max;
 
-	const Vector2 suv(
-			1.f / static_cast<float>(im->get_width()),
-			1.f / static_cast<float>(im->get_height()));
+		ProcessChunk(VoxelGraphRuntime::State &p_state, float p_ref_radius, float p_sdf_min, float p_sdf_max) :
+				state(p_state),
+				ref_radius(p_ref_radius),
+				sdf_min(p_sdf_min),
+				sdf_max(p_sdf_max) {}
 
-	const float nr = 1.f / (sdf_max - sdf_min);
+		void operator()(int x0, int y0, int width, int height) {
+			VOXEL_PROFILE_SCOPE();
 
-	im->lock();
+			const unsigned int area = width * height;
+			x_coords.resize(area);
+			y_coords.resize(area);
+			z_coords.resize(area);
+			sdf_values.resize(area);
+			runtime->prepare_state(state, area);
 
-	for (int iy = 0; iy < im->get_height(); ++iy) {
-		for (int ix = 0; ix < im->get_width(); ++ix) {
-			const Vector2 uv = suv * Vector2(ix, iy);
-			const Vector3 pos = get_3d_pos_from_panorama_uv(uv) * ref_radius;
-			const float sdf = runtime->generate_single(cache.state, pos);
-			const float nh = (-sdf - sdf_min) * nr;
-			im->set_pixel(ix, iy, Color(nh, nh, nh));
+			const Vector2 suv = Vector2(
+					1.f / static_cast<float>(im->get_width()),
+					1.f / static_cast<float>(im->get_height()));
+
+			const float nr = 1.f / (sdf_max - sdf_min);
+
+			const int xmax = x0 + width;
+			const int ymax = y0 + height;
+
+			unsigned int i = 0;
+			for (int iy = y0; iy < ymax; ++iy) {
+				for (int ix = x0; ix < xmax; ++ix) {
+					const Vector2 uv = suv * Vector2(ix, iy);
+					const Vector3 p = get_3d_pos_from_panorama_uv(uv) * ref_radius;
+					x_coords[i] = p.x;
+					y_coords[i] = p.y;
+					z_coords[i] = p.z;
+					++i;
+				}
+			}
+
+			runtime->generate_set(state,
+					to_slice(x_coords), to_slice(y_coords), to_slice(z_coords), to_slice(sdf_values), false, false);
+
+			// Calculate final pixels
+			im->lock();
+			i = 0;
+			for (int iy = y0; iy < ymax; ++iy) {
+				for (int ix = x0; ix < xmax; ++ix) {
+					const float sdf = sdf_values[i];
+					const float nh = (-sdf - sdf_min) * nr;
+					im->set_pixel(ix, iy, Color(nh, nh, nh));
+					++i;
+				}
+			}
+			im->unlock();
 		}
-	}
+	};
 
-	im->unlock();
+	Cache &cache = _cache;
+
+	ProcessChunk pc(cache.state, ref_radius, sdf_min, sdf_max);
+	pc.runtime = runtime;
+	pc.im = im;
+	for_chunks_2d(im->get_width(), im->get_height(), 32, pc);
 }
 
 // If this generator is used to produce a planet, specifically using a spherical heightmap approach,
 // then this function can be used to bake a map of the surface.
 // Such maps can be used by shaders to sharpen the details of the planet when seen from far away.
 void VoxelGeneratorGraph::bake_sphere_normalmap(Ref<Image> im, float ref_radius, float strength) {
+	VOXEL_PROFILE_SCOPE();
 	ERR_FAIL_COND(im.is_null());
 
 	std::shared_ptr<const VoxelGraphRuntime> runtime;
@@ -406,17 +548,122 @@ void VoxelGeneratorGraph::bake_sphere_normalmap(Ref<Image> im, float ref_radius,
 
 	ERR_FAIL_COND(runtime == nullptr || !runtime->has_output());
 
+	// This process would use too much memory if run over the entire image at once,
+	// so we'll subdivide the load in smaller chunks
+	struct ProcessChunk {
+		std::vector<float> x_coords;
+		std::vector<float> y_coords;
+		std::vector<float> z_coords;
+		std::vector<float> sdf_values_p; // TODO Could be used at the same time to get bump?
+		std::vector<float> sdf_values_px;
+		std::vector<float> sdf_values_py;
+		Ref<Image> im;
+		std::shared_ptr<const VoxelGraphRuntime> runtime;
+		VoxelGraphRuntime::State &state;
+		const float strength;
+		const float ref_radius;
+
+		ProcessChunk(VoxelGraphRuntime::State &p_state, float p_strength, float p_ref_radius) :
+				state(p_state),
+				strength(p_strength),
+				ref_radius(p_ref_radius) {}
+
+		void operator()(int x0, int y0, int width, int height) {
+			VOXEL_PROFILE_SCOPE();
+
+			const unsigned int area = width * height;
+			x_coords.resize(area);
+			y_coords.resize(area);
+			z_coords.resize(area);
+			sdf_values_p.resize(area);
+			sdf_values_px.resize(area);
+			sdf_values_py.resize(area);
+			runtime->prepare_state(state, area);
+
+			const float ns = 2.f / strength;
+
+			const Vector2 suv = Vector2(
+					1.f / static_cast<float>(im->get_width()),
+					1.f / static_cast<float>(im->get_height()));
+
+			const Vector2 normal_step = 0.5f * Vector2(1.f, 1.f) / im->get_size();
+			const Vector2 normal_step_x = Vector2(normal_step.x, 0.f);
+			const Vector2 normal_step_y = Vector2(0.f, normal_step.y);
+
+			const int xmax = x0 + width;
+			const int ymax = y0 + height;
+
+			// Get heights
+			unsigned int i = 0;
+			for (int iy = y0; iy < ymax; ++iy) {
+				for (int ix = x0; ix < xmax; ++ix) {
+					const Vector2 uv = suv * Vector2(ix, iy);
+					const Vector3 p = get_3d_pos_from_panorama_uv(uv) * ref_radius;
+					x_coords[i] = p.x;
+					y_coords[i] = p.y;
+					z_coords[i] = p.z;
+					++i;
+				}
+			}
+			// TODO Perform range analysis on the range of coordinates, it might still yield performance benefits
+			runtime->generate_set(state,
+					to_slice(x_coords), to_slice(y_coords), to_slice(z_coords), to_slice(sdf_values_p), false, false);
+
+			// Get neighbors along X
+			i = 0;
+			for (int iy = y0; iy < ymax; ++iy) {
+				for (int ix = x0; ix < xmax; ++ix) {
+					const Vector2 uv = suv * Vector2(ix, iy);
+					const Vector3 p = get_3d_pos_from_panorama_uv(uv + normal_step_x) * ref_radius;
+					x_coords[i] = p.x;
+					y_coords[i] = p.y;
+					z_coords[i] = p.z;
+					++i;
+				}
+			}
+			runtime->generate_set(state,
+					to_slice(x_coords), to_slice(y_coords), to_slice(z_coords), to_slice(sdf_values_px), false, false);
+
+			// Get neighbors along Y
+			i = 0;
+			for (int iy = y0; iy < ymax; ++iy) {
+				for (int ix = x0; ix < xmax; ++ix) {
+					const Vector2 uv = suv * Vector2(ix, iy);
+					const Vector3 p = get_3d_pos_from_panorama_uv(uv + normal_step_y) * ref_radius;
+					x_coords[i] = p.x;
+					y_coords[i] = p.y;
+					z_coords[i] = p.z;
+					++i;
+				}
+			}
+			runtime->generate_set(state,
+					to_slice(x_coords), to_slice(y_coords), to_slice(z_coords), to_slice(sdf_values_py), false, false);
+
+			// TODO This is probably invalid due to the distortion, may need to use another approach.
+			// Compute the 3D normal from gradient, then project it?
+
+			// Calculate final pixels
+			im->lock();
+			i = 0;
+			for (int iy = y0; iy < ymax; ++iy) {
+				for (int ix = x0; ix < xmax; ++ix) {
+					const float h = sdf_values_p[i];
+					const float h_px = sdf_values_px[i];
+					const float h_py = sdf_values_py[i];
+					++i;
+					const Vector3 normal = Vector3(h_px - h, ns, h_py - h).normalized();
+					const Color en(
+							0.5f * normal.x + 0.5f,
+							-0.5f * normal.z + 0.5f,
+							0.5f * normal.y + 0.5f);
+					im->set_pixel(ix, iy, en);
+				}
+			}
+			im->unlock();
+		}
+	};
+
 	Cache &cache = _cache;
-	// TODO Need to convert this to buffers instead of using single queries
-	runtime->prepare_state(cache.state, 1);
-
-	const Vector2 suv(
-			1.f / static_cast<float>(im->get_width()),
-			1.f / static_cast<float>(im->get_height()));
-
-	const Vector2 normal_step = 0.5f * Vector2(1.f, 1.f) / im->get_size();
-	const Vector2 normal_step_x = Vector2(normal_step.x, 0.f);
-	const Vector2 normal_step_y = Vector2(0.f, normal_step.y);
 
 	// The default for strength is 1.f
 	const float e = 0.001f;
@@ -428,36 +675,10 @@ void VoxelGeneratorGraph::bake_sphere_normalmap(Ref<Image> im, float ref_radius,
 		}
 	}
 
-	const float ns = 2.f / strength;
-
-	im->lock();
-
-	for (int iy = 0; iy < im->get_height(); ++iy) {
-		for (int ix = 0; ix < im->get_width(); ++ix) {
-			// TODO There is probably a more optimized way to do this
-			const Vector2 uv = suv * Vector2(ix, iy);
-
-			const Vector3 np_nx = get_3d_pos_from_panorama_uv(uv - normal_step_x) * ref_radius;
-			const Vector3 np_px = get_3d_pos_from_panorama_uv(uv + normal_step_x) * ref_radius;
-			const Vector3 np_ny = get_3d_pos_from_panorama_uv(uv - normal_step_y) * ref_radius;
-			const Vector3 np_py = get_3d_pos_from_panorama_uv(uv + normal_step_y) * ref_radius;
-
-			// TODO Need to convert this to buffers instead of using single queries
-			const float h_nx = -runtime->generate_single(cache.state, np_nx);
-			const float h_px = -runtime->generate_single(cache.state, np_px);
-			const float h_ny = -runtime->generate_single(cache.state, np_ny);
-			const float h_py = -runtime->generate_single(cache.state, np_py);
-
-			const Vector3 normal = Vector3(h_nx - h_px, ns, h_ny - h_py).normalized();
-			const Color en(
-					0.5f * normal.x + 0.5f,
-					-0.5f * normal.z + 0.5f,
-					0.5f * normal.y + 0.5f);
-			im->set_pixel(ix, iy, en);
-		}
-	}
-
-	im->unlock();
+	ProcessChunk pc(cache.state, strength, ref_radius);
+	pc.runtime = runtime;
+	pc.im = im;
+	for_chunks_2d(im->get_width(), im->get_height(), 32, pc);
 }
 
 // TODO This function isn't used yet, but whatever uses it should probably put locking and cache outside
@@ -470,10 +691,11 @@ float VoxelGeneratorGraph::generate_single(const Vector3i &position) {
 	ERR_FAIL_COND_V(runtime == nullptr || !runtime->has_output(), 0.f);
 	Cache &cache = _cache;
 	runtime->prepare_state(cache.state, 1);
-	return runtime->generate_single(cache.state, position.to_vec3());
+	return runtime->generate_single(cache.state, position.to_vec3(), false);
 }
 
-Interval VoxelGeneratorGraph::analyze_range(Vector3i min_pos, Vector3i max_pos) {
+Interval VoxelGeneratorGraph::analyze_range(Vector3i min_pos, Vector3i max_pos,
+		bool optimize_execution_map, bool debug) const {
 	std::shared_ptr<const VoxelGraphRuntime> runtime;
 	{
 		RWLockRead rlock(_runtime_lock);
@@ -481,9 +703,13 @@ Interval VoxelGeneratorGraph::analyze_range(Vector3i min_pos, Vector3i max_pos) 
 	}
 	ERR_FAIL_COND_V(runtime == nullptr || !runtime->has_output(), Interval::from_single_value(0.f));
 	Cache &cache = _cache;
-	// Note, buffer size is irrelevant here
+	// Note, buffer size is irrelevant here, because range analysis doesn't use buffers
 	runtime->prepare_state(cache.state, 1);
-	return runtime->analyze_range(cache.state, min_pos, max_pos);
+	Interval res = runtime->analyze_range(cache.state, min_pos, max_pos);
+	if (optimize_execution_map) {
+		runtime->generate_optimized_execution_map(cache.state, debug);
+	}
+	return res;
 }
 
 Ref<Resource> VoxelGeneratorGraph::duplicate(bool p_subresources) const {
@@ -665,7 +891,7 @@ float VoxelGeneratorGraph::debug_measure_microseconds_per_voxel(bool singular) {
 			for (uint32_t z = 0; z < cube_size; ++z) {
 				for (uint32_t y = 0; y < cube_size; ++y) {
 					for (uint32_t x = 0; x < cube_size; ++x) {
-						runtime->generate_single(cache.state, Vector3i(x, y, z).to_vec3());
+						runtime->generate_single(cache.state, Vector3i(x, y, z).to_vec3(), false);
 					}
 				}
 			}
@@ -693,7 +919,7 @@ float VoxelGeneratorGraph::debug_measure_microseconds_per_voxel(bool singular) {
 			profiling_clock.restart();
 
 			for (uint32_t y = 0; y < cube_size; ++y) {
-				runtime->generate_set(cache.state, sx, sy, sz, sdst, false);
+				runtime->generate_set(cache.state, sx, sy, sz, sdst, false, false);
 			}
 
 			elapsed_us += profiling_clock.restart();
@@ -701,7 +927,6 @@ float VoxelGeneratorGraph::debug_measure_microseconds_per_voxel(bool singular) {
 	}
 
 	float us = static_cast<double>(elapsed_us) / voxel_count;
-	// print_line(String("Time: {0}us").format(varray(us)));
 	return us;
 }
 
@@ -788,6 +1013,11 @@ float VoxelGeneratorGraph::_b_generate_single(Vector3 pos) {
 	return generate_single(Vector3i(pos));
 }
 
+Vector2 VoxelGeneratorGraph::_b_analyze_range(Vector3 min_pos, Vector3 max_pos) const {
+	const Interval r = analyze_range(Vector3i::from_floored(min_pos), Vector3i::from_floored(max_pos), false, false);
+	return Vector2(r.min, r.max);
+}
+
 Dictionary VoxelGeneratorGraph::_b_compile() {
 	VoxelGraphRuntime::CompilationResult res = compile();
 	Dictionary d;
@@ -833,12 +1063,34 @@ void VoxelGeneratorGraph::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_node_gui_position", "node_id", "position"),
 			&VoxelGeneratorGraph::set_node_gui_position);
 
+	ClassDB::bind_method(D_METHOD("set_sdf_clip_threshold", "threshold"), &VoxelGeneratorGraph::set_sdf_clip_threshold);
+	ClassDB::bind_method(D_METHOD("get_sdf_clip_threshold"), &VoxelGeneratorGraph::get_sdf_clip_threshold);
+
+	ClassDB::bind_method(D_METHOD("is_using_optimized_execution_map"),
+			&VoxelGeneratorGraph::is_using_optimized_execution_map);
+	ClassDB::bind_method(D_METHOD("set_use_optimized_execution_map", "use"),
+			&VoxelGeneratorGraph::set_use_optimized_execution_map);
+
+	ClassDB::bind_method(D_METHOD("set_use_subdivision", "use"), &VoxelGeneratorGraph::set_use_subdivision);
+	ClassDB::bind_method(D_METHOD("is_using_subdivision"), &VoxelGeneratorGraph::is_using_subdivision);
+
+	ClassDB::bind_method(D_METHOD("set_subdivision_size", "size"), &VoxelGeneratorGraph::set_subdivision_size);
+	ClassDB::bind_method(D_METHOD("get_subdivision_size"), &VoxelGeneratorGraph::get_subdivision_size);
+
+	ClassDB::bind_method(D_METHOD("set_debug_clipped_blocks", "enabled"),
+			&VoxelGeneratorGraph::set_debug_clipped_blocks);
+	ClassDB::bind_method(D_METHOD("is_debug_clipped_blocks"), &VoxelGeneratorGraph::is_debug_clipped_blocks);
+
+	ClassDB::bind_method(D_METHOD("set_use_xz_caching", "enabled"), &VoxelGeneratorGraph::set_use_xz_caching);
+	ClassDB::bind_method(D_METHOD("is_using_xz_caching"), &VoxelGeneratorGraph::is_using_xz_caching);
+
 	ClassDB::bind_method(D_METHOD("compile"), &VoxelGeneratorGraph::_b_compile);
 
 	ClassDB::bind_method(D_METHOD("get_node_type_count"), &VoxelGeneratorGraph::_b_get_node_type_count);
 	ClassDB::bind_method(D_METHOD("get_node_type_info", "type_id"), &VoxelGeneratorGraph::_b_get_node_type_info);
 
 	ClassDB::bind_method(D_METHOD("generate_single"), &VoxelGeneratorGraph::_b_generate_single);
+	ClassDB::bind_method(D_METHOD("analyze_range", "min_pos", "max_pos"), &VoxelGeneratorGraph::_b_analyze_range);
 
 	ClassDB::bind_method(D_METHOD("bake_sphere_bumpmap", "im", "ref_radius", "sdf_min", "sdf_max"),
 			&VoxelGeneratorGraph::bake_sphere_bumpmap);
@@ -857,6 +1109,17 @@ void VoxelGeneratorGraph::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "graph_data", PROPERTY_HINT_NONE, "",
 						 PROPERTY_USAGE_NOEDITOR | PROPERTY_USAGE_INTERNAL),
 			"_set_graph_data", "_get_graph_data");
+
+	ADD_GROUP("Performance Tuning", "");
+
+	ADD_PROPERTY(PropertyInfo(Variant::REAL, "sdf_clip_threshold"), "set_sdf_clip_threshold", "get_sdf_clip_threshold");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_optimized_execution_map"),
+			"set_use_optimized_execution_map", "is_using_optimized_execution_map");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_subdivision"), "set_use_subdivision", "is_using_subdivision");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "subdivision_size"), "set_subdivision_size", "get_subdivision_size");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_xz_caching"), "set_use_xz_caching", "is_using_xz_caching");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "debug_block_clipping"),
+			"set_debug_clipped_blocks", "is_debug_clipped_blocks");
 
 	ADD_SIGNAL(MethodInfo(SIGNAL_NODE_NAME_CHANGED, PropertyInfo(Variant::INT, "node_id")));
 
@@ -894,6 +1157,9 @@ void VoxelGeneratorGraph::_bind_methods() {
 	BIND_ENUM_CONSTANT(NODE_SDF_SPHERE);
 	BIND_ENUM_CONSTANT(NODE_SDF_TORUS);
 	BIND_ENUM_CONSTANT(NODE_SDF_PREVIEW);
+	BIND_ENUM_CONSTANT(NODE_SDF_SPHERE_HEIGHTMAP);
+	BIND_ENUM_CONSTANT(NODE_SDF_SMOOTH_UNION);
+	BIND_ENUM_CONSTANT(NODE_SDF_SMOOTH_SUBTRACT);
 	BIND_ENUM_CONSTANT(NODE_NORMALIZE_3D);
 	BIND_ENUM_CONSTANT(NODE_FAST_NOISE_2D);
 	BIND_ENUM_CONSTANT(NODE_FAST_NOISE_3D);

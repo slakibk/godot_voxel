@@ -11,6 +11,8 @@
 
 #include <memory>
 
+// TODO Don't inherit Object. Instead have a Godot wrapper, there is very little use for Object stuff
+
 // Access point for asynchronous voxel processing APIs.
 // Functions must be used from the main thread.
 class VoxelServer : public Object {
@@ -36,6 +38,7 @@ public:
 
 		Type type;
 		Ref<VoxelBuffer> voxels;
+		std::unique_ptr<VoxelInstanceBlockData> instances;
 		Vector3i position;
 		uint8_t lod;
 		bool dropped;
@@ -43,8 +46,9 @@ public:
 
 	struct BlockMeshInput {
 		// Moore area ordered by forward XYZ iteration
-		FixedArray<Ref<VoxelBuffer>, Cube::MOORE_AREA_3D_COUNT> blocks;
-		Vector3i position;
+		FixedArray<Ref<VoxelBuffer>, VoxelConstants::MAX_BLOCK_COUNT_PER_REQUEST> data_blocks;
+		unsigned int data_blocks_count = 0;
+		Vector3i render_block_position;
 		uint8_t lod = 0;
 	};
 
@@ -81,15 +85,18 @@ public:
 	// TODO Rename functions to C convention
 	uint32_t add_volume(ReceptionBuffers *buffers, VolumeType type);
 	void set_volume_transform(uint32_t volume_id, Transform t);
-	void set_volume_block_size(uint32_t volume_id, uint32_t block_size);
+	void set_volume_render_block_size(uint32_t volume_id, uint32_t block_size);
+	void set_volume_data_block_size(uint32_t volume_id, uint32_t block_size);
 	void set_volume_stream(uint32_t volume_id, Ref<VoxelStream> stream);
 	void set_volume_generator(uint32_t volume_id, Ref<VoxelGenerator> generator);
 	void set_volume_mesher(uint32_t volume_id, Ref<VoxelMesher> mesher);
-	void set_volume_octree_split_scale(uint32_t volume_id, float split_scale);
+	void set_volume_octree_lod_distance(uint32_t volume_id, float lod_distance);
 	void invalidate_volume_mesh_requests(uint32_t volume_id);
-	void request_block_mesh(uint32_t volume_id, BlockMeshInput &input);
-	void request_block_load(uint32_t volume_id, Vector3i block_pos, int lod);
-	void request_block_save(uint32_t volume_id, Ref<VoxelBuffer> voxels, Vector3i block_pos, int lod);
+	void request_block_mesh(uint32_t volume_id, const BlockMeshInput &input);
+	void request_block_load(uint32_t volume_id, Vector3i block_pos, int lod, bool request_instances);
+	void request_voxel_block_save(uint32_t volume_id, Ref<VoxelBuffer> voxels, Vector3i block_pos, int lod);
+	void request_instance_block_save(uint32_t volume_id, std::unique_ptr<VoxelInstanceBlockData> instances,
+			Vector3i block_pos, int lod);
 	void remove_volume(uint32_t volume_id);
 
 	// TODO Rename functions to C convention
@@ -121,11 +128,11 @@ public:
 		return _file_locker;
 	}
 
-	static inline int get_octree_lod_block_region_extent(float split_scale) {
+	static inline int get_octree_lod_block_region_extent(float lod_distance, float block_size) {
 		// This is a bounding radius of blocks around a viewer within which we may load them.
-		// It depends on the LOD split scale, which tells how close to a block we need to be for it to subdivide.
+		// `lod_distance` is the distance under which a block should subdivide into a smaller one.
 		// Each LOD is fractal so that value is the same for each of them, multiplied by 2^lod.
-		return static_cast<int>(split_scale) * 2 + 2;
+		return static_cast<int>(Math::ceil(lod_distance / block_size)) * 2 + 2;
 	}
 
 	struct Stats {
@@ -199,8 +206,9 @@ private:
 		Ref<VoxelStream> stream;
 		Ref<VoxelGenerator> generator;
 		Ref<VoxelMesher> mesher;
-		uint32_t block_size = 16;
-		float octree_split_scale = 0;
+		uint32_t render_block_size = 16;
+		uint32_t data_block_size = 16;
+		float octree_lod_distance = 0;
 		std::shared_ptr<StreamingDependency> stream_dependency;
 		std::shared_ptr<MeshingDependency> meshing_dependency;
 	};
@@ -229,8 +237,9 @@ private:
 		float drop_distance_squared;
 	};
 
-	void init_priority_dependency(PriorityDependency &dep, Vector3i block_position, uint8_t lod, const Volume &volume);
-	static int get_priority(const PriorityDependency &dep, uint8_t lod, float *out_closest_distance_sq);
+	void init_priority_dependency(PriorityDependency &dep, Vector3i block_position, uint8_t lod, const Volume &volume,
+			int block_size);
+	static int get_priority(const PriorityDependency &dep, uint8_t lod_index, float *out_closest_distance_sq);
 
 	class BlockDataRequest : public IVoxelTask {
 	public:
@@ -245,6 +254,7 @@ private:
 		bool is_cancelled() override;
 
 		Ref<VoxelBuffer> voxels;
+		std::unique_ptr<VoxelInstanceBlockData> instances;
 		Vector3i position;
 		uint32_t volume_id;
 		uint8_t lod;
@@ -252,6 +262,8 @@ private:
 		uint8_t type;
 		bool has_run = false;
 		bool too_far = false;
+		bool request_instances = false;
+		bool request_voxels = false;
 		PriorityDependency priority_dependency;
 		std::shared_ptr<StreamingDependency> stream_dependency;
 		// TODO Find a way to separate save, it doesnt need sorting
@@ -280,10 +292,11 @@ private:
 		int get_priority() override;
 		bool is_cancelled() override;
 
-		FixedArray<Ref<VoxelBuffer>, Cube::MOORE_AREA_3D_COUNT> blocks;
+		FixedArray<Ref<VoxelBuffer>, VoxelConstants::MAX_BLOCK_COUNT_PER_REQUEST> blocks;
 		Vector3i position;
 		uint32_t volume_id;
 		uint8_t lod;
+		uint8_t blocks_count;
 		bool has_run = false;
 		bool too_far = false;
 		PriorityDependency priority_dependency;

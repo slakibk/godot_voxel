@@ -1,5 +1,6 @@
 #include "voxel_mesher_cubes.h"
 #include "../../storage/voxel_buffer.h"
+#include "../../util/funcs.h"
 
 namespace {
 // 2-----3
@@ -386,11 +387,9 @@ thread_local VoxelMesherCubes::Cache VoxelMesherCubes::_cache;
 
 VoxelMesherCubes::VoxelMesherCubes() {
 	set_padding(PADDING, PADDING);
-	_parameters_lock = RWLock::create();
 }
 
 VoxelMesherCubes::~VoxelMesherCubes() {
-	memdelete(_parameters_lock);
 }
 
 void VoxelMesherCubes::build(VoxelMesher::Output &output, const VoxelMesher::Input &input) {

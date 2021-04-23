@@ -1,8 +1,9 @@
 #ifndef VOX_LOADER_H
 #define VOX_LOADER_H
 
-#include "../math/vector3i.h"
 #include "../meshers/cubes/voxel_color_palette.h"
+#include "../util/math/vector3i.h"
+#include <vector>
 
 class VoxelBuffer;
 
@@ -27,6 +28,7 @@ class VoxelVoxLoader : public Reference {
 public:
 	Error load_from_file(String fpath, Ref<VoxelBuffer> voxels, Ref<VoxelColorPalette> palette);
 	// TODO Have chunked loading for better memory usage
+	// TODO Saving
 
 private:
 	static void _bind_methods();

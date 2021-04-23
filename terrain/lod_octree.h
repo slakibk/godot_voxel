@@ -1,9 +1,9 @@
 #ifndef LOD_OCTREE_H
 #define LOD_OCTREE_H
 
-#include "../math/vector3i.h"
-#include "../octree_tables.h"
-#include "../voxel_constants.h"
+#include "../constants/octree_tables.h"
+#include "../constants/voxel_constants.h"
+#include "../util/math/vector3i.h"
 
 // Octree designed to handle level of detail.
 class LodOctree {
@@ -73,22 +73,15 @@ public:
 
 	// The higher, the longer LODs will spread and higher the quality.
 	// The lower, the shorter LODs will spread and lower the quality.
-	void set_split_scale(float p_split_scale) {
-
-		// Split scale must be greater than a threshold,
+	void set_lod_distance(float p_lod_distance) {
+		// Distance must be greater than a threshold,
 		// otherwise lods will decimate too fast and it will look messy
-		if (p_split_scale < VoxelConstants::MINIMUM_LOD_SPLIT_SCALE) {
-			p_split_scale = VoxelConstants::MINIMUM_LOD_SPLIT_SCALE;
-
-		} else if (p_split_scale > VoxelConstants::MAXIMUM_LOD_SPLIT_SCALE) {
-			p_split_scale = VoxelConstants::MAXIMUM_LOD_SPLIT_SCALE;
-		}
-
-		_split_scale = p_split_scale;
+		_lod_distance =
+				clamp(p_lod_distance, VoxelConstants::MINIMUM_LOD_DISTANCE, VoxelConstants::MAXIMUM_LOD_DISTANCE);
 	}
 
-	float get_split_scale() const {
-		return _split_scale;
+	float get_lod_distance() const {
+		return _lod_distance;
 	}
 
 	static inline int get_lod_factor(int lod) {
@@ -108,10 +101,8 @@ public:
 
 	template <typename UpdateActions_T>
 	void update(Vector3 view_pos, UpdateActions_T &actions) {
-
 		if (_is_root_created || _root.has_children()) {
 			update(ROOT_INDEX, Vector3i(), _max_depth, view_pos, actions);
-
 		} else {
 			// TODO I don't like this much
 			// Treat the root in a slightly different way the first time.
@@ -129,12 +120,28 @@ public:
 				parent_position.z * 2 + OctreeTables::g_octant_position[i][2]);
 	}
 
+	const Node *get_root() const {
+		return &_root;
+	}
+
+	const Node *get_child(const Node *node, unsigned int i) const {
+		ERR_FAIL_COND_V(node == nullptr, nullptr);
+		ERR_FAIL_INDEX_V(i, 8, nullptr);
+		return get_node(node->first_child + i);
+	}
+
 private:
 	// This pool treats nodes as packs of 8 so they can be addressed by only knowing the first child
 	class NodePool {
 	public:
 		// Warning: the returned pointer may be invalidated later by `allocate_children`. Use with care.
 		inline Node *get_node(unsigned int i) {
+			CRASH_COND(i >= _nodes.size());
+			CRASH_COND(i == ROOT_INDEX);
+			return &_nodes[i];
+		}
+
+		inline const Node *get_node(unsigned int i) const {
 			CRASH_COND(i >= _nodes.size());
 			CRASH_COND(i == ROOT_INDEX);
 			return &_nodes[i];
@@ -180,23 +187,29 @@ private:
 		}
 	}
 
+	inline const Node *get_node(unsigned int index) const {
+		if (index == ROOT_INDEX) {
+			return &_root;
+		} else {
+			return _pool.get_node(index);
+		}
+	}
+
 	template <typename UpdateActions_T>
 	void update(unsigned int node_index, Vector3i node_pos, int lod, Vector3 view_pos, UpdateActions_T &actions) {
 		// This function should be called regularly over frames.
 
-		int lod_factor = get_lod_factor(lod);
-		int chunk_size = _base_size * lod_factor;
-		Vector3 world_center = static_cast<real_t>(chunk_size) * (node_pos.to_vec3() + Vector3(0.5, 0.5, 0.5));
-		float split_distance = chunk_size * _split_scale;
+		const int lod_factor = get_lod_factor(lod);
+		const int chunk_size = _base_size * lod_factor;
+		const Vector3 world_center = static_cast<real_t>(chunk_size) * (node_pos.to_vec3() + Vector3(0.5, 0.5, 0.5));
+		const float split_distance = _lod_distance * lod_factor;
 		Node *node = get_node(node_index);
 
 		if (!node->has_children()) {
-
 			// If it's not the last LOD, if close enough and custom conditions get fulfilled
 			if (lod > 0 && world_center.distance_to(view_pos) < split_distance && actions.can_split(node_pos, lod - 1)) {
 				// Split
-
-				unsigned int first_child = _pool.allocate_children();
+				const unsigned int first_child = _pool.allocate_children();
 				// Get node again because `allocate_children` may invalidate the pointer
 				node = get_node(node_index);
 				node->first_child = first_child;
@@ -212,12 +225,11 @@ private:
 			}
 
 		} else {
-
 			bool has_split_child = false;
-			unsigned int first_child = node->first_child;
+			const unsigned int first_child = node->first_child;
 
 			for (unsigned int i = 0; i < 8; ++i) {
-				unsigned int child_index = first_child + i;
+				const unsigned int child_index = first_child + i;
 				update(child_index, get_child_position(node_pos, i), lod - 1, view_pos, actions);
 				has_split_child |= _pool.get_node(child_index)->has_children();
 			}
@@ -267,7 +279,7 @@ private:
 	bool _is_root_created = false;
 	int _max_depth = 0;
 	float _base_size = 16;
-	float _split_scale = 2.0;
+	float _lod_distance = 32.0;
 	// TODO May be worth making this pool external for sharing purpose
 	NodePool _pool;
 };

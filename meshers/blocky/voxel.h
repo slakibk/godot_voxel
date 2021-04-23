@@ -1,10 +1,11 @@
 #ifndef VOXEL_TYPE_H
 #define VOXEL_TYPE_H
 
-#include "../../cube_tables.h"
+#include "../../constants/cube_tables.h"
 #include "../../util/fixed_array.h"
 
 #include <scene/resources/mesh.h>
+#include <vector>
 
 class VoxelLibrary;
 

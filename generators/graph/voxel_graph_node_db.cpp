@@ -1,5 +1,7 @@
 #include "voxel_graph_node_db.h"
+#include "../../util/math/sdf.h"
 #include "../../util/noise/fast_noise_lite.h"
+#include "../../util/profiling.h"
 #include "image_range_grid.h"
 #include "range_utility.h"
 
@@ -120,14 +122,6 @@ inline float get_pixel_repeat_linear(const Image &im, float x, float y) {
 	return h;
 }
 
-inline Interval get_length(const Interval &x, const Interval &y) {
-	return sqrt(x * x + y * y);
-}
-
-inline Interval get_length(const Interval &x, const Interval &y, const Interval &z) {
-	return sqrt(x * x + y * y + z * z);
-}
-
 inline float select(float a, float b, float threshold, float t) {
 	return t < threshold ? a : b;
 }
@@ -142,9 +136,12 @@ inline Interval select(const Interval &a, const Interval &b, const Interval &thr
 	return Interval(min(a.min, b.min), max(a.max, b.max));
 }
 
-template <typename T>
-inline T skew3(T x) {
+inline float skew3(float x) {
 	return (x * x * x + x) * 0.5f;
+}
+
+inline Interval skew3(Interval x) {
+	return (cubed(x) + x) * 0.5f;
 }
 
 // This is mostly useful for generating planets from an existing heightmap
@@ -205,35 +202,6 @@ inline Interval sdf_sphere_heightmap(Interval x, Interval y, Interval z, float r
 	}
 
 	return sd - m * h;
-}
-
-// For more, see https://www.iquilezles.org/www/articles/distfunctions/distfunctions.htm
-// TODO Move these to VoxelMath once we have a proper namespace, so they can be used in VoxelTool too
-
-inline float sdf_box(const Vector3 pos, const Vector3 extents) {
-	Vector3 d = pos.abs() - extents;
-	return min(max(d.x, max(d.y, d.z)), 0.f) +
-		   Vector3(max(d.x, 0.f), max(d.y, 0.f), max(d.z, 0.f)).length();
-}
-
-inline Interval sdf_box(
-		const Interval &x, const Interval &y, const Interval &z,
-		const Interval &sx, const Interval &sy, const Interval &sz) {
-	Interval dx = abs(x) - sx;
-	Interval dy = abs(y) - sy;
-	Interval dz = abs(z) - sz;
-	return min_interval(max_interval(dx, max_interval(dy, dz)), 0.f) +
-		   get_length(max_interval(dx, 0.f), max_interval(dy, 0.f), max_interval(dz, 0.f));
-}
-
-inline float sdf_torus(float x, float y, float z, float r0, float r1) {
-	Vector2 q = Vector2(Vector2(x, z).length() - r0, y);
-	return q.length() - r1;
-}
-
-inline Interval sdf_torus(const Interval &x, const Interval &y, const Interval &z, const Interval r0, const Interval r1) {
-	Interval qx = get_length(x, z) - r0;
-	return get_length(qx, y) - r1;
 }
 
 VoxelGraphNodeDB *VoxelGraphNodeDB::get_singleton() {
@@ -363,7 +331,12 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		t.range_analysis_func = [](RangeAnalysisContext &ctx) {
 			const Interval a = ctx.get_input(0);
 			const Interval b = ctx.get_input(1);
-			ctx.set_output(0, a * b);
+			if (ctx.get_input_address(0) == ctx.get_input_address(1)) {
+				// The two operands have the same source, we can optimize to a square function
+				ctx.set_output(0, squared(a));
+			} else {
+				ctx.set_output(0, a * b);
+			}
 		};
 	}
 	{
@@ -542,7 +515,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 			const Interval y1 = ctx.get_input(3);
 			const Interval dx = x1 - x0;
 			const Interval dy = y1 - y0;
-			const Interval r = sqrt(dx * dx + dy * dy);
+			const Interval r = sqrt(squared(dx) + squared(dy));
 			ctx.set_output(0, r);
 		};
 	}
@@ -582,7 +555,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 			const Interval dx = x1 - x0;
 			const Interval dy = y1 - y0;
 			const Interval dz = z1 - z0;
-			Interval r = sqrt(dx * dx + dy * dy + dz * dz);
+			Interval r = get_length(dx, dy, dz);
 			ctx.set_output(0, r);
 		};
 	}
@@ -628,9 +601,12 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		t.inputs.push_back(Port("b"));
 		t.inputs.push_back(Port("ratio"));
 		t.outputs.push_back(Port("out"));
+		// TODO Add a `clamp` parameter? It helps optimization
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
-			const VoxelGraphRuntime::Buffer &a = ctx.get_input(0);
-			const VoxelGraphRuntime::Buffer &b = ctx.get_input(1);
+			bool a_ignored;
+			bool b_ignored;
+			const VoxelGraphRuntime::Buffer &a = ctx.try_get_input(0, a_ignored);
+			const VoxelGraphRuntime::Buffer &b = ctx.try_get_input(1, b_ignored);
 			const VoxelGraphRuntime::Buffer &r = ctx.get_input(2);
 			VoxelGraphRuntime::Buffer &out = ctx.get_output(0);
 			const uint32_t buffer_size = out.size;
@@ -642,18 +618,40 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 						out.data[i] = Math::lerp(ca, cb, r.data[i]);
 					}
 				} else {
-					for (uint32_t i = 0; i < buffer_size; ++i) {
-						out.data[i] = Math::lerp(ca, b.data[i], r.data[i]);
+					if (b_ignored) {
+						for (uint32_t i = 0; i < buffer_size; ++i) {
+							out.data[i] = ca;
+						}
+					} else {
+						for (uint32_t i = 0; i < buffer_size; ++i) {
+							out.data[i] = Math::lerp(ca, b.data[i], r.data[i]);
+						}
 					}
 				}
 			} else if (b.is_constant) {
 				const float cb = b.constant_value;
-				for (uint32_t i = 0; i < buffer_size; ++i) {
-					out.data[i] = Math::lerp(a.data[i], cb, r.data[i]);
+				if (a_ignored) {
+					for (uint32_t i = 0; i < buffer_size; ++i) {
+						out.data[i] = cb;
+					}
+				} else {
+					for (uint32_t i = 0; i < buffer_size; ++i) {
+						out.data[i] = Math::lerp(a.data[i], cb, r.data[i]);
+					}
 				}
 			} else {
-				for (uint32_t i = 0; i < buffer_size; ++i) {
-					out.data[i] = Math::lerp(a.data[i], b.data[i], r.data[i]);
+				if (a_ignored) {
+					for (uint32_t i = 0; i < buffer_size; ++i) {
+						out.data[i] = b.data[i];
+					}
+				} else if (b_ignored) {
+					for (uint32_t i = 0; i < buffer_size; ++i) {
+						out.data[i] = a.data[i];
+					}
+				} else {
+					for (uint32_t i = 0; i < buffer_size; ++i) {
+						out.data[i] = Math::lerp(a.data[i], b.data[i], r.data[i]);
+					}
 				}
 			}
 		};
@@ -663,6 +661,15 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 			// Note: if I call this `t` like I use to do with `lerp`, GCC complains it shadows `t` from the outer scope.
 			// Even though this lambda does not capture anything from the outer scope :shrug:
 			const Interval r = ctx.get_input(2);
+			if (r.is_single_value()) {
+				if (r.min == 1.f) {
+					// a will be ignored
+					ctx.ignore_input(0);
+				} else if (r.min == 0.f) {
+					// b will be ignored
+					ctx.ignore_input(1);
+				}
+			}
 			ctx.set_output(0, lerp(a, b, r));
 		};
 	}
@@ -771,6 +778,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 			ctx.set_params(p);
 		};
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_CURVE");
 			const VoxelGraphRuntime::Buffer &a = ctx.get_input(0);
 			VoxelGraphRuntime::Buffer &out = ctx.get_output(0);
 			const Params p = ctx.get_params<Params>();
@@ -818,6 +826,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		};
 
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_NOISE_2D");
 			const VoxelGraphRuntime::Buffer &x = ctx.get_input(0);
 			const VoxelGraphRuntime::Buffer &y = ctx.get_input(1);
 			VoxelGraphRuntime::Buffer &out = ctx.get_output(0);
@@ -861,6 +870,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		};
 
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_NOISE_3D");
 			const VoxelGraphRuntime::Buffer &x = ctx.get_input(0);
 			const VoxelGraphRuntime::Buffer &y = ctx.get_input(1);
 			const VoxelGraphRuntime::Buffer &z = ctx.get_input(2);
@@ -906,6 +916,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 			ctx.add_memdelete_cleanup(im_range);
 		};
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_IMAGE_2D");
 			const VoxelGraphRuntime::Buffer &x = ctx.get_input(0);
 			const VoxelGraphRuntime::Buffer &y = ctx.get_input(1);
 			VoxelGraphRuntime::Buffer &out = ctx.get_output(0);
@@ -1032,6 +1043,174 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		};
 	}
 	{
+		struct Params {
+			float smoothness;
+		};
+		NodeType &t = types[VoxelGeneratorGraph::NODE_SDF_SMOOTH_UNION];
+		t.name = "SdfSmoothUnion";
+		t.category = CATEGORY_SDF;
+		t.inputs.push_back(Port("a"));
+		t.inputs.push_back(Port("b"));
+		t.outputs.push_back(Port("sdf"));
+		t.params.push_back(Param("smoothness", Variant::REAL, 0.f));
+		t.compile_func = [](CompileContext &ctx) {
+			Params p;
+			p.smoothness = ctx.get_param(0).operator float();
+			ctx.set_params(p);
+		};
+		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_SDF_SMOOTH_UNION");
+			bool a_ignored;
+			bool b_ignored;
+			const VoxelGraphRuntime::Buffer &a = ctx.try_get_input(0, a_ignored);
+			const VoxelGraphRuntime::Buffer &b = ctx.try_get_input(1, b_ignored);
+			VoxelGraphRuntime::Buffer &out = ctx.get_output(0);
+			const Params params = ctx.get_params<Params>();
+			if (a_ignored) {
+				for (uint32_t i = 0; i < out.size; ++i) {
+					out.data[i] = b.data[i];
+				}
+			} else if (b_ignored) {
+				for (uint32_t i = 0; i < out.size; ++i) {
+					out.data[i] = a.data[i];
+				}
+			} else if (params.smoothness > 0.0001f) {
+				for (uint32_t i = 0; i < out.size; ++i) {
+					out.data[i] = sdf_smooth_union(a.data[i], b.data[i], params.smoothness);
+				}
+			} else {
+				// Fallback on hard-union, smooth union does not support zero smoothness
+				for (uint32_t i = 0; i < out.size; ++i) {
+					out.data[i] = sdf_union(a.data[i], b.data[i]);
+				}
+			}
+		};
+		t.range_analysis_func = [](RangeAnalysisContext &ctx) {
+			const Interval a = ctx.get_input(0);
+			const Interval b = ctx.get_input(1);
+			const Params params = ctx.get_params<Params>();
+
+			if (params.smoothness > 0.0001f) {
+				const SdfAffectingArguments args = sdf_polynomial_smooth_union_side(a, b, params.smoothness);
+				switch (args) {
+					case SDF_ONLY_A:
+						ctx.ignore_input(0);
+						break;
+					case SDF_ONLY_B:
+						ctx.ignore_input(1);
+						break;
+					case SDF_BOTH:
+						break;
+					default:
+						CRASH_NOW();
+						break;
+				}
+				ctx.set_output(0, sdf_smooth_union(a, b, params.smoothness));
+
+			} else {
+				const SdfAffectingArguments args = sdf_union_side(a, b);
+				switch (args) {
+					case SDF_ONLY_A:
+						ctx.ignore_input(0);
+						break;
+					case SDF_ONLY_B:
+						ctx.ignore_input(1);
+						break;
+					case SDF_BOTH:
+						break;
+					default:
+						CRASH_NOW();
+						break;
+				}
+				ctx.set_output(0, sdf_union(a, b));
+			}
+		};
+	}
+	{
+		struct Params {
+			float smoothness;
+		};
+		NodeType &t = types[VoxelGeneratorGraph::NODE_SDF_SMOOTH_SUBTRACT];
+		t.name = "SdfSmoothSubtract";
+		t.category = CATEGORY_SDF;
+		t.inputs.push_back(Port("a"));
+		t.inputs.push_back(Port("b"));
+		t.outputs.push_back(Port("sdf"));
+		t.params.push_back(Param("smoothness", Variant::REAL, 0.f));
+		t.compile_func = [](CompileContext &ctx) {
+			Params p;
+			p.smoothness = ctx.get_param(0).operator float();
+			ctx.set_params(p);
+		};
+		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_SDF_SMOOTH_SUBTRACT");
+			bool a_ignored;
+			bool b_ignored;
+			const VoxelGraphRuntime::Buffer &a = ctx.try_get_input(0, a_ignored);
+			const VoxelGraphRuntime::Buffer &b = ctx.try_get_input(1, b_ignored);
+			VoxelGraphRuntime::Buffer &out = ctx.get_output(0);
+			const Params params = ctx.get_params<Params>();
+			if (a_ignored) {
+				for (uint32_t i = 0; i < out.size; ++i) {
+					out.data[i] = b.data[i];
+				}
+			} else if (b_ignored) {
+				for (uint32_t i = 0; i < out.size; ++i) {
+					out.data[i] = a.data[i];
+				}
+			} else if (params.smoothness > 0.0001f) {
+				for (uint32_t i = 0; i < out.size; ++i) {
+					out.data[i] = sdf_smooth_subtract(a.data[i], b.data[i], params.smoothness);
+				}
+			} else {
+				// Fallback on hard-subtract, smooth subtract does not support zero smoothness
+				for (uint32_t i = 0; i < out.size; ++i) {
+					out.data[i] = sdf_subtract(a.data[i], b.data[i]);
+				}
+			}
+		};
+		t.range_analysis_func = [](RangeAnalysisContext &ctx) {
+			const Interval a = ctx.get_input(0);
+			const Interval b = ctx.get_input(1);
+			const Params params = ctx.get_params<Params>();
+
+			if (params.smoothness > 0.0001f) {
+				const SdfAffectingArguments args = sdf_polynomial_smooth_subtract_side(a, b, params.smoothness);
+				switch (args) {
+					case SDF_ONLY_A:
+						ctx.ignore_input(0);
+						break;
+					case SDF_ONLY_B:
+						ctx.ignore_input(1);
+						break;
+					case SDF_BOTH:
+						break;
+					default:
+						CRASH_NOW();
+						break;
+				}
+				ctx.set_output(0, sdf_smooth_subtract(a, b, params.smoothness));
+
+			} else {
+				const SdfAffectingArguments args = sdf_subtract_side(a, b);
+				switch (args) {
+					case SDF_ONLY_A:
+						ctx.ignore_input(0);
+						break;
+					case SDF_ONLY_B:
+						ctx.ignore_input(1);
+						break;
+					case SDF_BOTH:
+						break;
+					default:
+						CRASH_NOW();
+						break;
+				}
+				ctx.set_output(0, sdf_subtract(a, b));
+			}
+		};
+	}
+	{
 		NodeType &t = types[VoxelGeneratorGraph::NODE_SDF_PREVIEW];
 		t.name = "SdfPreview";
 		t.category = CATEGORY_DEBUG;
@@ -1050,6 +1229,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		t.inputs.push_back(Port("t"));
 		t.outputs.push_back(Port("out"));
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			// TODO Mark ignored input to optimize things
 			const VoxelGraphRuntime::Buffer &a = ctx.get_input(0);
 			const VoxelGraphRuntime::Buffer &b = ctx.get_input(1);
 			const VoxelGraphRuntime::Buffer &threshold = ctx.get_input(2);
@@ -1126,6 +1306,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		};
 
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_SDF_SPHERE_HEIGHTMAP");
 			const VoxelGraphRuntime::Buffer &x = ctx.get_input(0);
 			const VoxelGraphRuntime::Buffer &y = ctx.get_input(1);
 			const VoxelGraphRuntime::Buffer &z = ctx.get_input(2);
@@ -1161,6 +1342,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		t.outputs.push_back(Port("len"));
 
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_NORMALIZE_3D");
 			const VoxelGraphRuntime::Buffer &xb = ctx.get_input(0);
 			const VoxelGraphRuntime::Buffer &yb = ctx.get_input(1);
 			const VoxelGraphRuntime::Buffer &zb = ctx.get_input(2);
@@ -1185,7 +1367,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 			const Interval x = ctx.get_input(0);
 			const Interval y = ctx.get_input(1);
 			const Interval z = ctx.get_input(2);
-			const Interval len = sqrt(x * x + y * y + z * z);
+			const Interval len = get_length(x, y, z);
 			const Interval nx = x / len;
 			const Interval ny = y / len;
 			const Interval nz = z / len;
@@ -1220,6 +1402,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		};
 
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_FAST_NOISE_2D");
 			const VoxelGraphRuntime::Buffer &x = ctx.get_input(0);
 			const VoxelGraphRuntime::Buffer &y = ctx.get_input(1);
 			VoxelGraphRuntime::Buffer &out = ctx.get_output(0);
@@ -1262,6 +1445,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		};
 
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_FAST_NOISE_3D");
 			const VoxelGraphRuntime::Buffer &x = ctx.get_input(0);
 			const VoxelGraphRuntime::Buffer &y = ctx.get_input(1);
 			const VoxelGraphRuntime::Buffer &z = ctx.get_input(2);
@@ -1306,6 +1490,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		};
 
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_FAST_NOISE_GRADIENT_2D");
 			const VoxelGraphRuntime::Buffer &xb = ctx.get_input(0);
 			const VoxelGraphRuntime::Buffer &yb = ctx.get_input(1);
 			VoxelGraphRuntime::Buffer &out_x = ctx.get_output(0);
@@ -1357,6 +1542,7 @@ VoxelGraphNodeDB::VoxelGraphNodeDB() {
 		};
 
 		t.process_buffer_func = [](ProcessBufferContext &ctx) {
+			VOXEL_PROFILE_SCOPE_NAMED("NODE_FAST_NOISE_GRADIENT_3D");
 			const VoxelGraphRuntime::Buffer &xb = ctx.get_input(0);
 			const VoxelGraphRuntime::Buffer &yb = ctx.get_input(1);
 			const VoxelGraphRuntime::Buffer &zb = ctx.get_input(2);
@@ -1462,7 +1648,8 @@ Dictionary VoxelGraphNodeDB::get_type_info_dict(uint32_t id) const {
 	return type_dict;
 }
 
-bool VoxelGraphNodeDB::try_get_type_id_from_name(const String &name, VoxelGeneratorGraph::NodeTypeID &out_type_id) const {
+bool VoxelGraphNodeDB::try_get_type_id_from_name(
+		const String &name, VoxelGeneratorGraph::NodeTypeID &out_type_id) const {
 	const VoxelGeneratorGraph::NodeTypeID *p = _type_name_to_id.getptr(name);
 	if (p == nullptr) {
 		return false;
@@ -1471,7 +1658,8 @@ bool VoxelGraphNodeDB::try_get_type_id_from_name(const String &name, VoxelGenera
 	return true;
 }
 
-bool VoxelGraphNodeDB::try_get_param_index_from_name(uint32_t type_id, const String &name, uint32_t &out_param_index) const {
+bool VoxelGraphNodeDB::try_get_param_index_from_name(
+		uint32_t type_id, const String &name, uint32_t &out_param_index) const {
 	ERR_FAIL_INDEX_V(type_id, _types.size(), false);
 	const NodeType &t = _types[type_id];
 	const uint32_t *p = t.param_name_to_index.getptr(name);
@@ -1482,7 +1670,8 @@ bool VoxelGraphNodeDB::try_get_param_index_from_name(uint32_t type_id, const Str
 	return true;
 }
 
-bool VoxelGraphNodeDB::try_get_input_index_from_name(uint32_t type_id, const String &name, uint32_t &out_input_index) const {
+bool VoxelGraphNodeDB::try_get_input_index_from_name(
+		uint32_t type_id, const String &name, uint32_t &out_input_index) const {
 	ERR_FAIL_INDEX_V(type_id, _types.size(), false);
 	const NodeType &t = _types[type_id];
 	const uint32_t *p = t.input_name_to_index.getptr(name);

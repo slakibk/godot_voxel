@@ -47,6 +47,8 @@ public:
 		NODE_SDF_TORUS,
 		NODE_SDF_PREVIEW, // For debugging
 		NODE_SDF_SPHERE_HEIGHTMAP,
+		NODE_SDF_SMOOTH_UNION,
+		NODE_SDF_SMOOTH_SUBTRACT,
 		NODE_NORMALIZE_3D,
 		NODE_FAST_NOISE_2D,
 		NODE_FAST_NOISE_3D,
@@ -94,6 +96,26 @@ public:
 	PoolIntArray get_node_ids() const;
 	uint32_t generate_node_id() { return _graph.generate_node_id(); }
 
+	// Performance tuning (advanced)
+
+	bool is_using_optimized_execution_map() const;
+	void set_use_optimized_execution_map(bool use);
+
+	float get_sdf_clip_threshold() const;
+	void set_sdf_clip_threshold(float t);
+
+	void set_use_subdivision(bool use);
+	bool is_using_subdivision() const;
+
+	void set_subdivision_size(int size);
+	int get_subdivision_size() const;
+
+	void set_debug_clipped_blocks(bool enabled);
+	bool is_debug_clipped_blocks() const;
+
+	void set_use_xz_caching(bool enabled);
+	bool is_using_xz_caching() const;
+
 	// VoxelGenerator implementation
 
 	int get_used_channels_mask() const override;
@@ -116,10 +138,15 @@ public:
 	void generate_set(ArraySlice<float> in_x, ArraySlice<float> in_y, ArraySlice<float> in_z,
 			ArraySlice<float> out_sdf);
 
+	Interval analyze_range(Vector3i min_pos, Vector3i max_pos, bool optimize_execution_map, bool debug) const;
+	void generate_optimized_execution_map();
+
 	// Returns state from the last generator used in the current thread
 	static const VoxelGraphRuntime::State &get_last_state_from_current_thread();
 
-	uint32_t get_output_port_address(ProgramGraph::PortLocation port) const;
+	bool try_get_output_port_address(ProgramGraph::PortLocation port, uint32_t &out_address) const;
+
+	void find_dependencies(uint32_t node_id, std::vector<uint32_t> &out_dependencies) const;
 
 	// Debug
 
@@ -127,8 +154,6 @@ public:
 	void debug_load_waves_preset();
 
 private:
-	Interval analyze_range(Vector3i min_pos, Vector3i max_pos);
-
 	Dictionary get_graph_as_variant_data() const;
 	void load_graph_from_variant_data(Dictionary data);
 
@@ -140,6 +165,7 @@ private:
 	// See https://github.com/godotengine/godot/issues/36895
 	void _b_set_node_param_null(int node_id, int param_index);
 	float _b_generate_single(Vector3 pos);
+	Vector2 _b_analyze_range(Vector3 min_pos, Vector3 max_pos) const;
 	Dictionary _b_compile();
 
 	void _on_subresource_changed();
@@ -148,11 +174,31 @@ private:
 	static void _bind_methods();
 
 	ProgramGraph _graph;
+	// This generator performs range analysis using nodes of the graph. Terrain surface can only appear when SDF
+	// crosses zero within a block. For each generated block, an estimated range of the output is calculated.
+	// If that range is beyond this threshold (either negatively or positively), then blocks will be given a uniform
+	// value, either air or matter, skipping generation of all voxels.
+	// Setting a high threshold turns it off, providing consistent SDF, but it may severely impact performance.
+	float _sdf_clip_threshold = 1.5f;
+	// Sometimes block size can be larger, but it makes range analysis less precise. So it is possible to subdivide
+	// generation within areas of the block instead of doing it whole.
+	// Blocks size must be a multiple of the subdivision size.
+	bool _use_subdivision = true;
+	int _subdivision_size = 16;
+	// When enabled, the generator will attempt to optimize out nodes that don't need to run in specific areas,
+	// if their output range is considered to not affect the final result.
+	bool _use_optimized_execution_map = true;
+	// When enabled, nodes using only the X and Z coordinates will be cached when generating blocks in slices along Y.
+	// This prevents recalculating values that would otherwise be the same on each slice.
+	// It helps a lot when part of the graph is generating a heightmap for example.
+	bool _use_xz_caching = true;
+	// If true, inverts clipped blocks so they create visual artifacts making the clipped area visible.
+	bool _debug_clipped_blocks = false;
 
 	// Only compiling and generation methods are thread-safe.
 
 	std::shared_ptr<VoxelGraphRuntime> _runtime = nullptr;
-	RWLock *_runtime_lock = nullptr;
+	RWLock _runtime_lock;
 
 	struct Cache {
 		std::vector<float> x_cache;

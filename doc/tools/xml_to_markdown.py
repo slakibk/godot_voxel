@@ -17,6 +17,10 @@ import os
 godot_classes_url = "https://docs.godotengine.org/en/stable/classes"
 
 
+def make_link(text, url):
+    return "[" + text + "](" + url + ")"
+
+
 def make_type(name, module_class_names):
     if name == "void":
         link = "#"
@@ -24,7 +28,7 @@ def make_type(name, module_class_names):
         link = name + ".md"
     else:
         link = godot_classes_url + "/class_" + name.lower() + ".html"
-    return "[" + name + "](" + link + ")"
+    return make_link(name, link)
 
 
 # Assumes text is dedented
@@ -44,7 +48,17 @@ def format_regular_text(text, module_class_names):
         assert i != -1
         cmd = text[:i]
         text = text[i + 1:]
-        if cmd.find(' ') == -1:
+
+        if cmd.startswith('url='):
+            # [url=xxx]text[/url]
+            url = cmd[len('url='):]
+            i = text.find('[/url]')
+            assert i != -1
+            link_text = text[:i]
+            s += make_link(link_text, url)
+            text = text[i + len('[/url]'):]
+
+        elif cmd.find(' ') == -1:
             # [typename]
             s += make_type(cmd, module_class_names)
         else:
@@ -163,7 +177,7 @@ def make_constants(items):
 
 def make_custom_internal_link(name):
     assert name.find(' ') == -1
-    return "[" + name + "](#i_" + name + ")"
+    return make_link(name, "#i_" + name)
 
 
 # This is a hack we can do because Markdown allows to fallback on HTML
@@ -325,11 +339,15 @@ def process_xml(f_xml, f_out, module_class_names):
                 + make_custom_internal_anchor(member.attrib['name']) + " **" + member.attrib['name'] + "**"
             if 'default' in member.attrib:
                 out += " = " + member.attrib['default']
-            out += "\n"
+            out += "\n\n"
 
             if member.text is not None:
-                out += make_text(member.text, module_class_names)
-            out += "\n\n"
+                text = make_text(member.text, module_class_names)
+                if text != "":
+                    out += text
+                    out += "\n"
+
+            out += "\n"
     
     # Method descriptions
     if len(methods) > 0:
@@ -350,9 +368,11 @@ def process_xml(f_xml, f_out, module_class_names):
             desc = method.find('description')
             if desc is not None:
                 text = make_text(desc.text, module_class_names)
-                out += text
+                if text != "":
+                    out += text
+                    out += "\n"
             
-            out += "\n\n"
+            out += "\n"
 
     # Footer
     out += "_Generated on " + strftime("%b %d, %Y", gmtime()) + "_\n" 

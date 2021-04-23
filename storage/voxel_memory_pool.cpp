@@ -1,5 +1,8 @@
 #include "voxel_memory_pool.h"
+#include "../util/macros.h"
 #include "../util/profiling.h"
+
+#include <core/os/os.h>
 #include <core/print_string.h>
 #include <core/variant.h>
 
@@ -25,15 +28,15 @@ VoxelMemoryPool *VoxelMemoryPool::get_singleton() {
 }
 
 VoxelMemoryPool::VoxelMemoryPool() {
-	_mutex = Mutex::create();
 }
 
 VoxelMemoryPool::~VoxelMemoryPool() {
 #ifdef TOOLS_ENABLED
-	debug_print();
+	if (OS::get_singleton()->is_stdout_verbose()) {
+		debug_print();
+	}
 #endif
 	clear();
-	memdelete(_mutex);
 }
 
 uint8_t *VoxelMemoryPool::allocate(uint32_t size) {
@@ -78,12 +81,17 @@ void VoxelMemoryPool::clear() {
 void VoxelMemoryPool::debug_print() {
 	MutexLock lock(_mutex);
 	print_line("-------- VoxelMemoryPool ----------");
-	const uint32_t *key = nullptr;
-	int i = 0;
-	while ((key = _pools.next(key))) {
-		Pool *pool = _pools.get(*key);
-		print_line(String("Pool {0} for size {1}: {2} blocks").format(varray(i, *key, static_cast<int>(pool->blocks.size()))));
-		++i;
+	if (_pools.size() == 0) {
+		print_line("No pools created");
+	} else {
+		const uint32_t *key = nullptr;
+		int i = 0;
+		while ((key = _pools.next(key))) {
+			Pool *pool = _pools.get(*key);
+			print_line(String("Pool {0} for size {1}: {2} blocks")
+							   .format(varray(i, *key, SIZE_T_TO_VARIANT(pool->blocks.size()))));
+			++i;
+		}
 	}
 }
 

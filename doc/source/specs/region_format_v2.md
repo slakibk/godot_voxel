@@ -1,7 +1,8 @@
 Region format
 ==================
 
-**This document is about an old version of the format. You may check the most recent version.**
+!!! warn
+    This document is about an old version of the format. You may check the most recent version.
 
 Version: 2
 
@@ -110,7 +111,9 @@ header_size + first_sector_index * sector_size
 ```
 
 Once we have the address of the block, the first 4 bytes at this address will contain the size of the written data.
-Note: those 4 bytes are included in the total block size when the number of occupied sectors is determined.
+
+!!! note
+	those 4 bytes are included in the total block size when the number of occupied sectors is determined.
 
 ```
 RegionBlockData
@@ -124,7 +127,7 @@ The obtained buffer can be read using the block format.
 Block format
 --------------
 
-See [Block format](block_format.md)
+See [Block format](block_format_v1.md)
 
 
 Current Issues

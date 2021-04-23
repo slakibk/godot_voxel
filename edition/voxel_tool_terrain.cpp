@@ -1,5 +1,4 @@
 #include "voxel_tool_terrain.h"
-#include "../terrain/voxel_map.h"
 #include "../terrain/voxel_terrain.h"
 #include "../util/voxel_raycast.h"
 #include <core/func_ref.h>
@@ -20,7 +19,7 @@ bool VoxelToolTerrain::is_area_editable(const Rect3i &box) const {
 }
 
 Ref<VoxelRaycastResult> VoxelToolTerrain::raycast(Vector3 pos, Vector3 dir, float max_distance, uint32_t collision_mask) {
-	// TODO Transform input if the terrain is rotated (in the future it can be made a Spatial node)
+	// TODO Transform input if the terrain is rotated
 	// TODO Implement broad-phase on blocks to minimize locking and increase performance
 
 	struct RaycastPredicate {
@@ -31,7 +30,7 @@ Ref<VoxelRaycastResult> VoxelToolTerrain::raycast(Vector3 pos, Vector3 dir, floa
 		bool operator()(Vector3i pos) {
 			//unsigned int channel = context->channel;
 
-			const VoxelMap &map = terrain.get_storage();
+			const VoxelDataMap &map = terrain.get_storage();
 			int v0 = map.get_voxel(pos, VoxelBuffer::CHANNEL_TYPE);
 
 			if (library.has_voxel(v0) == false) {
@@ -71,21 +70,44 @@ Ref<VoxelRaycastResult> VoxelToolTerrain::raycast(Vector3 pos, Vector3 dir, floa
 	Vector3i prev_pos;
 
 	RaycastPredicate predicate = { *_terrain, **library_ref, collision_mask };
-	if (voxel_raycast(pos, dir, predicate, max_distance, hit_pos, prev_pos)) {
+	float hit_distance;
+	float hit_distance_prev;
+	if (voxel_raycast(pos, dir, predicate, max_distance, hit_pos, prev_pos, hit_distance, hit_distance_prev)) {
 		res.instance();
 		res->position = hit_pos;
 		res->previous_position = prev_pos;
+		res->distance_along_ray = hit_distance;
 	}
 
 	return res;
 }
 
-uint64_t VoxelToolTerrain::_get_voxel(Vector3i pos) {
+void VoxelToolTerrain::copy(Vector3i pos, Ref<VoxelBuffer> dst, uint8_t channels_mask) {
+	ERR_FAIL_COND(_terrain == nullptr);
+	ERR_FAIL_COND(dst.is_null());
+	if (channels_mask == 0) {
+		channels_mask = (1 << _channel);
+	}
+	_terrain->get_storage().get_buffer_copy(pos, **dst, channels_mask);
+}
+
+void VoxelToolTerrain::paste(Vector3i pos, Ref<VoxelBuffer> p_voxels, uint8_t channels_mask, uint64_t mask_value) {
+	ERR_FAIL_COND(_terrain == nullptr);
+	ERR_FAIL_COND(p_voxels.is_null());
+	ERR_PRINT("Not implemented");
+	if (channels_mask == 0) {
+		channels_mask = (1 << _channel);
+	}
+	_terrain->get_storage().paste(pos, **p_voxels, channels_mask, mask_value, false);
+	_post_edit(Rect3i(pos, p_voxels->get_size()));
+}
+
+uint64_t VoxelToolTerrain::_get_voxel(Vector3i pos) const {
 	ERR_FAIL_COND_V(_terrain == nullptr, 0);
 	return _terrain->get_storage().get_voxel(pos, _channel);
 }
 
-float VoxelToolTerrain::_get_voxel_f(Vector3i pos) {
+float VoxelToolTerrain::_get_voxel_f(Vector3i pos) const {
 	ERR_FAIL_COND_V(_terrain == nullptr, 0);
 	return _terrain->get_storage().get_voxel_f(pos, _channel);
 }
@@ -102,13 +124,13 @@ void VoxelToolTerrain::_set_voxel_f(Vector3i pos, float v) {
 
 void VoxelToolTerrain::_post_edit(const Rect3i &box) {
 	ERR_FAIL_COND(_terrain == nullptr);
-	_terrain->make_area_dirty(box);
+	_terrain->post_edit_area(box);
 }
 
 void VoxelToolTerrain::set_voxel_metadata(Vector3i pos, Variant meta) {
 	ERR_FAIL_COND(_terrain == nullptr);
-	VoxelMap &map = _terrain->get_storage();
-	VoxelBlock *block = map.get_block(map.voxel_to_block(pos));
+	VoxelDataMap &map = _terrain->get_storage();
+	VoxelDataBlock *block = map.get_block(map.voxel_to_block(pos));
 	ERR_FAIL_COND_MSG(block == nullptr, "Area not editable");
 	RWLockWrite lock(block->voxels->get_lock());
 	block->voxels->set_voxel_metadata(map.to_local(pos), meta);
@@ -116,8 +138,8 @@ void VoxelToolTerrain::set_voxel_metadata(Vector3i pos, Variant meta) {
 
 Variant VoxelToolTerrain::get_voxel_metadata(Vector3i pos) {
 	ERR_FAIL_COND_V(_terrain == nullptr, Variant());
-	VoxelMap &map = _terrain->get_storage();
-	VoxelBlock *block = map.get_block(map.voxel_to_block(pos));
+	VoxelDataMap &map = _terrain->get_storage();
+	VoxelDataBlock *block = map.get_block(map.voxel_to_block(pos));
 	ERR_FAIL_COND_V_MSG(block == nullptr, Variant(), "Area not editable");
 	RWLockRead lock(block->voxels->get_lock());
 	return block->voxels->get_voxel_metadata(map.to_local(pos));
@@ -143,7 +165,7 @@ void VoxelToolTerrain::run_blocky_random_tick(AABB voxel_area, int voxel_count, 
 	const Vector3i min_pos = Vector3i(voxel_area.position);
 	const Vector3i max_pos = min_pos + Vector3i(voxel_area.size);
 
-	const VoxelMap &map = _terrain->get_storage();
+	const VoxelDataMap &map = _terrain->get_storage();
 
 	const Vector3i min_block_pos = map.voxel_to_block(min_pos);
 	const Vector3i max_block_pos = map.voxel_to_block(max_pos);
@@ -169,7 +191,7 @@ void VoxelToolTerrain::run_blocky_random_tick(AABB voxel_area, int voxel_count, 
 
 		const Vector3i block_origin = map.block_to_voxel(block_pos);
 
-		const VoxelBlock *block = map.get_block(block_pos);
+		const VoxelDataBlock *block = map.get_block(block_pos);
 		if (block != nullptr) {
 			// Doing ONLY reads here.
 			{

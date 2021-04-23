@@ -1,7 +1,7 @@
 #ifndef VOXEL_TOOL_H
 #define VOXEL_TOOL_H
 
-#include "../math/rect3i.h"
+#include "../util/math/rect3i.h"
 #include <core/reference.h>
 
 class VoxelBuffer;
@@ -12,10 +12,12 @@ class VoxelRaycastResult : public Reference {
 public:
 	Vector3i position;
 	Vector3i previous_position;
+	float distance_along_ray;
 
 private:
 	Vector3 _b_get_position() const;
 	Vector3 _b_get_previous_position() const;
+	float _b_get_distance() const;
 
 	static void _bind_methods();
 };
@@ -34,6 +36,8 @@ public:
 		MODE_SET
 	};
 
+	VoxelTool();
+
 	void set_value(uint64_t val);
 	uint64_t get_value() const;
 
@@ -46,8 +50,11 @@ public:
 	void set_eraser_value(uint64_t value);
 	uint64_t get_eraser_value() const;
 
-	uint64_t get_voxel(Vector3i pos);
-	float get_voxel_f(Vector3i pos);
+	uint64_t get_voxel(Vector3i pos) const;
+	float get_voxel_f(Vector3i pos) const;
+
+	float get_sdf_scale() const;
+	void set_sdf_scale(float s);
 
 	// TODO Methods working on a whole area must use an implementation that minimizes locking!
 
@@ -61,8 +68,8 @@ public:
 	virtual void do_sphere(Vector3 center, float radius);
 	virtual void do_box(Vector3i begin, Vector3i end);
 
-	virtual void copy(Vector3i pos, Ref<VoxelBuffer> dst, uint64_t mask_value);
-	virtual void paste(Vector3i pos, Ref<VoxelBuffer> p_voxels, uint64_t mask_value);
+	virtual void copy(Vector3i pos, Ref<VoxelBuffer> dst, uint8_t channels_mask);
+	virtual void paste(Vector3i pos, Ref<VoxelBuffer> p_voxels, uint8_t channels_mask, uint64_t mask_value);
 
 	virtual Ref<VoxelRaycastResult> raycast(Vector3 pos, Vector3 dir, float max_distance, uint32_t collision_mask);
 
@@ -77,37 +84,69 @@ protected:
 
 	// These methods never go alone, but may be used in others.
 	// They don't represent an edit, they only abstract the lower-level API
-	virtual uint64_t _get_voxel(Vector3i pos);
-	virtual float _get_voxel_f(Vector3i pos);
+	virtual uint64_t _get_voxel(Vector3i pos) const;
+	virtual float _get_voxel_f(Vector3i pos) const;
 	virtual void _set_voxel(Vector3i pos, uint64_t v);
 	virtual void _set_voxel_f(Vector3i pos, float v);
 	virtual void _post_edit(const Rect3i &box);
 
 private:
-	// Bindings to convert to more specialized C++ types and handle virtuality cuz I don't know if it works by binding straight
-	uint64_t _b_get_voxel(Vector3 pos) { return get_voxel(Vector3i(pos)); }
-	float _b_get_voxel_f(Vector3 pos) { return get_voxel_f(Vector3i(pos)); }
-	void _b_set_voxel(Vector3 pos, uint64_t v) { set_voxel(Vector3i(pos), v); }
-	void _b_set_voxel_f(Vector3 pos, float v) { set_voxel_f(Vector3i(pos), v); }
+	// Bindings to convert to more specialized C++ types and handle virtuality,
+	// cuz I don't know if it works by binding straight
+
+	uint64_t _b_get_voxel(Vector3 pos) {
+		return get_voxel(Vector3i::from_floored(pos));
+	}
+	float _b_get_voxel_f(Vector3 pos) {
+		return get_voxel_f(Vector3i::from_floored(pos));
+	}
+	void _b_set_voxel(Vector3 pos, uint64_t v) {
+		set_voxel(Vector3i::from_floored(pos), v);
+	}
+	void _b_set_voxel_f(Vector3 pos, float v) {
+		set_voxel_f(Vector3i::from_floored(pos), v);
+	}
 	Ref<VoxelRaycastResult> _b_raycast(Vector3 pos, Vector3 dir, float max_distance, uint32_t collision_mask) {
 		return raycast(pos, dir, max_distance, collision_mask);
 	}
-	void _b_do_point(Vector3 pos) { do_point(Vector3i(pos)); }
-	void _b_do_line(Vector3i begin, Vector3i end) { do_line(Vector3i(begin), Vector3i(end)); }
-	void _b_do_circle(Vector3 pos, float radius, Vector3 direction) { do_circle(Vector3i(pos), radius, Vector3i(direction)); }
-	void _b_do_sphere(Vector3 pos, float radius) { do_sphere(pos, radius); }
-	void _b_do_box(Vector3 begin, Vector3 end) { do_box(Vector3i(begin), Vector3i(end)); }
-	void _b_paste(Vector3 pos, Ref<Reference> voxels, int mask_value) { paste(Vector3i(pos), voxels, mask_value); }
+	void _b_do_point(Vector3 pos) {
+		do_point(Vector3i::from_floored(pos));
+	}
+	void _b_do_line(Vector3 begin, Vector3 end) {
+		do_line(Vector3i::from_floored(begin), Vector3i::from_floored(end));
+	}
+	void _b_do_circle(Vector3 pos, float radius, Vector3 direction) {
+		do_circle(Vector3i::from_floored(pos), radius, Vector3i::from_floored(direction));
+	}
+	void _b_do_sphere(Vector3 pos, float radius) {
+		do_sphere(pos, radius);
+	}
+	void _b_do_box(Vector3 begin, Vector3 end) {
+		do_box(Vector3i::from_floored(begin), Vector3i(end));
+	}
+	void _b_copy(Vector3 pos, Ref<Reference> voxels, int channel_mask) {
+		copy(Vector3i::from_floored(pos), voxels, channel_mask);
+	}
+	void _b_paste(Vector3 pos, Ref<Reference> voxels, int channels_mask, int mask_value) {
+		paste(Vector3i::from_floored(pos), voxels, channels_mask, mask_value);
+	}
 
-	Variant _b_get_voxel_metadata(Vector3 pos) { return get_voxel_metadata(Vector3i(pos)); }
-	void _b_set_voxel_metadata(Vector3 pos, Variant meta) { return set_voxel_metadata(Vector3i(pos), meta); }
+	Variant _b_get_voxel_metadata(Vector3 pos) {
+		return get_voxel_metadata(Vector3i::from_floored(pos));
+	}
+	void _b_set_voxel_metadata(Vector3 pos, Variant meta) {
+		return set_voxel_metadata(Vector3i::from_floored(pos), meta);
+	}
 
-	bool _b_is_area_editable(AABB box) { return is_area_editable(Rect3i(box.position, box.size)); }
+	bool _b_is_area_editable(AABB box) {
+		return is_area_editable(Rect3i(Vector3i::from_floored(box.position), Vector3i::from_floored(box.size)));
+	}
 
 protected:
 	uint64_t _value = 0;
 	uint64_t _eraser_value = 0; // air
 	int _channel = 0;
+	float _sdf_scale = 1.f;
 	Mode _mode = MODE_ADD;
 };
 

@@ -27,6 +27,8 @@ public:
 	void generate_block(VoxelBlockRequest &input) override;
 
 protected:
+	void _on_noise_changed();
+
 	static void _bind_methods();
 
 private:
@@ -40,7 +42,7 @@ private:
 	};
 
 	Parameters _parameters;
-	RWLock *_parameters_lock;
+	RWLock _parameters_lock;
 };
 
 #endif // VOXEL_GENERATOR_NOISE_H

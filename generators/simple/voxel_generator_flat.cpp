@@ -1,11 +1,9 @@
 #include "voxel_generator_flat.h"
 
 VoxelGeneratorFlat::VoxelGeneratorFlat() {
-	_parameters_lock = RWLock::create();
 }
 
 VoxelGeneratorFlat::~VoxelGeneratorFlat() {
-	memdelete(_parameters_lock);
 }
 
 void VoxelGeneratorFlat::set_channel(VoxelBuffer::ChannelId channel) {
@@ -15,6 +13,7 @@ void VoxelGeneratorFlat::set_channel(VoxelBuffer::ChannelId channel) {
 		RWLockWrite wlock(_parameters_lock);
 		if (_parameters.channel != channel) {
 			_parameters.channel = channel;
+			changed = true;
 		}
 	}
 	if (changed) {

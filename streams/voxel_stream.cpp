@@ -1,13 +1,10 @@
 #include "voxel_stream.h"
-#include "../voxel_string_names.h"
 #include <core/script_language.h>
 
 VoxelStream::VoxelStream() {
-	_parameters_lock = RWLock::create();
 }
 
 VoxelStream::~VoxelStream() {
-	memdelete(_parameters_lock);
 }
 
 VoxelStream::Result VoxelStream::emerge_block(Ref<VoxelBuffer> out_buffer, Vector3i origin_in_voxels, int lod) {
@@ -37,6 +34,23 @@ void VoxelStream::immerge_blocks(const Vector<VoxelBlockRequest> &p_blocks) {
 	}
 }
 
+bool VoxelStream::supports_instance_blocks() const {
+	// Can be implemented in subclasses
+	return false;
+}
+
+void VoxelStream::load_instance_blocks(
+		ArraySlice<VoxelStreamInstanceDataRequest> out_blocks, ArraySlice<Result> out_results) {
+	// Can be implemented in subclasses
+	for (size_t i = 0; i < out_results.size(); ++i) {
+		out_results[i] = RESULT_BLOCK_NOT_FOUND;
+	}
+}
+
+void VoxelStream::save_instance_blocks(ArraySlice<VoxelStreamInstanceDataRequest> p_blocks) {
+	// Can be implemented in subclasses
+}
+
 int VoxelStream::get_used_channels_mask() const {
 	return 0;
 }
@@ -52,7 +66,7 @@ bool VoxelStream::get_save_generator_output() const {
 }
 
 int VoxelStream::get_block_size_po2() const {
-	return 4;
+	return VoxelConstants::DEFAULT_BLOCK_SIZE_PO2;
 }
 
 int VoxelStream::get_lod_count() const {

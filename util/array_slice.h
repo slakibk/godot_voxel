@@ -16,7 +16,6 @@ public:
 			_size(0) {
 	}
 
-	// TODO Get rid of unsafe constructor, use specialized ones
 	inline ArraySlice(T *p_ptr, size_t p_begin, size_t p_end) {
 		CRASH_COND(p_end < p_begin);
 		_ptr = p_ptr + p_begin;
@@ -34,6 +33,7 @@ public:
 		_size = p_end - p_begin;
 	}
 
+	// TODO Remove this one, prefer to_slice() specializations
 	inline ArraySlice(std::vector<T> &vec, size_t p_begin, size_t p_end) {
 		CRASH_COND(p_end < p_begin);
 		CRASH_COND(p_begin >= vec.size());
@@ -42,6 +42,7 @@ public:
 		_size = p_end - p_begin;
 	}
 
+	// TODO Remove this one, prefer to_slice() specializations
 	template <unsigned int N>
 	inline ArraySlice(FixedArray<T, N> &a) {
 		_ptr = a.data();
@@ -49,7 +50,7 @@ public:
 	}
 
 	inline ArraySlice<T> sub(size_t from, size_t len) const {
-		CRASH_COND(from + len >= _size);
+		CRASH_COND(from + len > _size);
 		return ArraySlice<T>(_ptr + from, len);
 	}
 
@@ -57,16 +58,6 @@ public:
 		CRASH_COND(from >= _size);
 		return ArraySlice<T>(_ptr + from, _size - from);
 	}
-
-	// const ArraySlice<T> sub_const(size_t from, size_t len) const {
-	// 	CRASH_COND(from + len >= _size);
-	// 	return ArraySlice{ _ptr + from, len };
-	// }
-
-	// const ArraySlice<T> sub_const(size_t from) const {
-	// 	CRASH_COND(from >= _size);
-	// 	return ArraySlice{ _ptr + from, _size - from };
-	// }
 
 	template <typename U>
 	ArraySlice<U> reinterpret_cast_to() const {
@@ -114,5 +105,26 @@ private:
 	T *_ptr;
 	size_t _size;
 };
+
+template <typename T>
+ArraySlice<const T> to_slice(const std::vector<T> &vec) {
+	return ArraySlice<const T>(vec.data(), 0, vec.size());
+}
+
+template <typename T>
+ArraySlice<T> to_slice(std::vector<T> &vec) {
+	return ArraySlice<T>(vec.data(), 0, vec.size());
+}
+
+template <typename T>
+ArraySlice<const T> to_slice_const(const std::vector<T> &vec) {
+	return ArraySlice<const T>(vec.data(), 0, vec.size());
+}
+
+template <typename T, unsigned int N>
+ArraySlice<T> to_slice(FixedArray<T, N> &a, unsigned int count) {
+	CRASH_COND(count > a.size());
+	return ArraySlice<T>(a.data(), count);
+}
 
 #endif // ARRAY_SLICE_H

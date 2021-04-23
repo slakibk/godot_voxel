@@ -3,6 +3,7 @@
 
 #include "../voxel_mesher.h"
 #include "voxel_color_palette.h"
+#include <vector>
 
 // A super simple mesher only producing colored cubes
 class VoxelMesherCubes : public VoxelMesher {
@@ -79,7 +80,7 @@ private:
 
 	// Parameters
 	Parameters _parameters;
-	RWLock *_parameters_lock = nullptr;
+	RWLock _parameters_lock;
 
 	// Work cache
 	static thread_local Cache _cache;
