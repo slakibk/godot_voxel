@@ -2,7 +2,7 @@
 #define VOXEL_TERRAIN_H
 
 #include "../server/voxel_server.h"
-#include "voxel_data_map.h"
+#include "../storage/voxel_data_map.h"
 #include "voxel_mesh_map.h"
 #include "voxel_node.h"
 
@@ -39,10 +39,16 @@ public:
 	void set_mesh_block_size(unsigned int p_block_size);
 
 	void post_edit_voxel(Vector3i pos);
-	void post_edit_area(Rect3i box_in_voxels);
+	void post_edit_area(Box3i box_in_voxels);
 
 	void set_generate_collisions(bool enabled);
 	bool get_generate_collisions() const { return _generate_collisions; }
+
+	void set_collision_layer(int layer);
+	int get_collision_layer() const;
+
+	void set_collision_mask(int mask);
+	int get_collision_mask() const;
 
 	unsigned int get_max_view_distance() const;
 	void set_max_view_distance(unsigned int distance_in_voxels);
@@ -62,8 +68,8 @@ public:
 	void set_run_stream_in_editor(bool enable);
 	bool is_stream_running_in_editor() const;
 
-	void set_bounds(Rect3i box);
-	Rect3i get_bounds() const;
+	void set_bounds(Box3i box);
+	Box3i get_bounds() const;
 
 	void restart_stream() override;
 	void remesh_all_blocks() override;
@@ -117,7 +123,7 @@ private:
 	void unload_mesh_block(Vector3i bpos);
 	//void make_data_block_dirty(Vector3i bpos);
 	void try_schedule_mesh_update(VoxelMeshBlock *block);
-	void try_schedule_mesh_update_from_data(const Rect3i &box_in_voxels);
+	void try_schedule_mesh_update_from_data(const Box3i &box_in_voxels);
 
 	void save_all_modified_blocks(bool with_copy);
 	void get_viewer_pos_and_direction(Vector3 &out_pos, Vector3 &out_direction) const;
@@ -146,8 +152,8 @@ private:
 	struct PairedViewer {
 		struct State {
 			Vector3i local_position_voxels;
-			Rect3i data_box;
-			Rect3i mesh_box;
+			Box3i data_box;
+			Box3i mesh_box;
 			int view_distance_voxels = 0;
 			bool requires_collisions = false;
 			bool requires_meshes = false;
@@ -167,8 +173,8 @@ private:
 	// Area within which voxels can exist.
 	// Note, these bounds might not be exactly represented. This volume is chunk-based, so the result will be
 	// approximated to the closest chunk.
-	Rect3i _bounds_in_voxels;
-	Rect3i _prev_bounds_in_voxels;
+	Box3i _bounds_in_voxels;
+	Box3i _prev_bounds_in_voxels;
 
 	unsigned int _max_view_distance_voxels = 128;
 
@@ -189,6 +195,8 @@ private:
 	Ref<VoxelGenerator> _generator;
 
 	bool _generate_collisions = true;
+	unsigned int _collision_layer = 1;
+	unsigned int _collision_mask = 1;
 	bool _run_stream_in_editor = true;
 	//bool _stream_enabled = false;
 

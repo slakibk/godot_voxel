@@ -5,7 +5,6 @@
 
 VoxelDataMap::VoxelDataMap() :
 		_last_accessed_block(nullptr) {
-
 	// TODO Make it configurable in editor (with all necessary notifications and updatings!)
 	set_block_size_pow2(VoxelConstants::DEFAULT_BLOCK_SIZE_PO2);
 
@@ -202,7 +201,7 @@ bool VoxelDataMap::is_block_surrounded(Vector3i pos) const {
 	return true;
 }
 
-void VoxelDataMap::get_buffer_copy(Vector3i min_pos, VoxelBuffer &dst_buffer, unsigned int channels_mask) {
+void VoxelDataMap::copy(Vector3i min_pos, VoxelBuffer &dst_buffer, unsigned int channels_mask) {
 	const Vector3i max_pos = min_pos + dst_buffer.get_size();
 
 	const Vector3i min_block_pos = voxel_to_block(min_pos);
@@ -219,31 +218,29 @@ void VoxelDataMap::get_buffer_copy(Vector3i min_pos, VoxelBuffer &dst_buffer, un
 						continue;
 					}
 					const VoxelDataBlock *block = get_block(bpos);
+					const Vector3i src_block_origin = block_to_voxel(bpos);
 
 					if (block != nullptr) {
 						const VoxelBuffer &src_buffer = **block->voxels;
 
 						dst_buffer.set_channel_depth(channel, src_buffer.get_channel_depth(channel));
 
-						const Vector3i offset = block_to_voxel(bpos);
-
 						RWLockRead lock(src_buffer.get_lock());
 
 						// Note: copy_from takes care of clamping the area if it's on an edge
 						dst_buffer.copy_from(src_buffer,
-								min_pos - offset,
-								max_pos - offset,
-								offset - min_pos,
+								min_pos - src_block_origin,
+								src_buffer.get_size(),
+								Vector3i(),
 								channel);
 
 					} else {
 						// For now, inexistent blocks default to hardcoded defaults, corresponding to "empty space".
 						// If we want to change this, we may have to add an API for that.
-						const Vector3i offset = block_to_voxel(bpos);
 						dst_buffer.fill_area(
 								_default_voxel[channel],
-								offset - min_pos,
-								offset - min_pos + block_size_v,
+								src_block_origin - min_pos,
+								src_block_origin - min_pos + block_size_v,
 								channel);
 					}
 				}
@@ -254,7 +251,6 @@ void VoxelDataMap::get_buffer_copy(Vector3i min_pos, VoxelBuffer &dst_buffer, un
 
 void VoxelDataMap::paste(Vector3i min_pos, VoxelBuffer &src_buffer, unsigned int channels_mask, uint64_t mask_value,
 		bool create_new_blocks) {
-
 	const Vector3i max_pos = min_pos + src_buffer.get_size();
 
 	const Vector3i min_block_pos = voxel_to_block(min_pos);
@@ -278,25 +274,30 @@ void VoxelDataMap::paste(Vector3i min_pos, VoxelBuffer &src_buffer, unsigned int
 						}
 					}
 
-					const Vector3i offset = block_to_voxel(bpos);
+					const Vector3i dst_block_origin = block_to_voxel(bpos);
 
 					VoxelBuffer &dst_buffer = **block->voxels;
 					RWLockWrite lock(dst_buffer.get_lock());
 
 					if (mask_value != std::numeric_limits<uint64_t>::max()) {
-						dst_buffer.read_write_action(Rect3i(offset - min_pos, src_buffer.get_size()), channel,
-								[&src_buffer, mask_value, offset, channel](const Vector3i pos, uint64_t dst_v) {
-									const uint64_t src_v = src_buffer.get_voxel(pos + offset, channel);
+						const Box3i dst_box(min_pos - dst_block_origin, src_buffer.get_size());
+
+						const Vector3i src_offset = -dst_box.pos;
+
+						dst_buffer.read_write_action(dst_box, channel,
+								[&src_buffer, mask_value, src_offset, channel](const Vector3i pos, uint64_t dst_v) {
+									const uint64_t src_v = src_buffer.get_voxel(pos + src_offset, channel);
 									if (src_v == mask_value) {
 										return dst_v;
 									}
 									return src_v;
 								});
+
 					} else {
 						dst_buffer.copy_from(src_buffer,
-								offset - min_pos,
-								offset - max_pos,
-								min_pos - offset,
+								Vector3i(),
+								src_buffer.get_size(),
+								min_pos - dst_block_origin,
 								channel);
 					}
 				}
@@ -327,8 +328,8 @@ int VoxelDataMap::get_block_count() const {
 	return _blocks.size();
 }
 
-bool VoxelDataMap::is_area_fully_loaded(const Rect3i voxels_box) const {
-	Rect3i block_box = voxels_box.downscaled(get_block_size());
+bool VoxelDataMap::is_area_fully_loaded(const Box3i voxels_box) const {
+	Box3i block_box = voxels_box.downscaled(get_block_size());
 	return block_box.all_cells_match([this](Vector3i pos) {
 		return has_block(pos);
 	});

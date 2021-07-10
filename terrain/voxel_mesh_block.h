@@ -2,9 +2,9 @@
 #define VOXEL_MESH_BLOCK_H
 
 #include "../constants/cube_tables.h"
+#include "../storage/voxel_ref_count.h"
 #include "../util/godot/direct_mesh_instance.h"
 #include "../util/godot/direct_static_body.h"
-#include "voxel_ref_count.h"
 
 class Spatial;
 
@@ -67,6 +67,8 @@ public:
 	// Collisions
 
 	void set_collision_mesh(Vector<Array> surface_arrays, bool debug_collision, Spatial *node);
+	void set_collision_layer(int layer);
+	void set_collision_mask(int mask);
 	void drop_collision();
 	// TODO Collision layer and mask
 

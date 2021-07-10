@@ -5,6 +5,8 @@
 #endif
 
 #include "../edition/voxel_tool_buffer.h"
+#include "../util/funcs.h"
+#include "../util/profiling.h"
 #include "voxel_buffer.h"
 
 #include <core/func_ref.h>
@@ -31,9 +33,6 @@ inline void free_channel_data(uint8_t *data, uint32_t size) {
 #endif
 }
 
-uint32_t g_depth_bit_counts[] = {
-	8, 16, 32, 64
-};
 uint64_t g_depth_max_values[] = {
 	0xff, // 8
 	0xffff, // 16
@@ -43,7 +42,7 @@ uint64_t g_depth_max_values[] = {
 
 inline uint32_t get_depth_bit_count(VoxelBuffer::Depth d) {
 	CRASH_COND(d < 0 || d >= VoxelBuffer::DEPTH_COUNT);
-	return g_depth_bit_counts[d];
+	return VoxelBuffer::get_depth_byte_count(d) << 3;
 }
 
 inline uint64_t get_max_value_for_depth(VoxelBuffer::Depth d) {
@@ -65,10 +64,10 @@ static_assert(sizeof(uint64_t) == sizeof(double), "uint64_t and double cannot be
 inline uint64_t real_to_raw_voxel(real_t value, VoxelBuffer::Depth depth) {
 	switch (depth) {
 		case VoxelBuffer::DEPTH_8_BIT:
-			return VoxelBuffer::norm_to_u8(value);
+			return norm_to_u8(value);
 
 		case VoxelBuffer::DEPTH_16_BIT:
-			return VoxelBuffer::norm_to_u16(value);
+			return norm_to_u16(value);
 
 		case VoxelBuffer::DEPTH_32_BIT: {
 			MarshallFloat m;
@@ -90,10 +89,10 @@ inline real_t raw_voxel_to_real(uint64_t value, VoxelBuffer::Depth depth) {
 	// Depths below 32 are normalized between -1 and 1
 	switch (depth) {
 		case VoxelBuffer::DEPTH_8_BIT:
-			return VoxelBuffer::u8_to_norm(value);
+			return u8_to_norm(value);
 
 		case VoxelBuffer::DEPTH_16_BIT:
-			return VoxelBuffer::u16_to_norm(value);
+			return u16_to_norm(value);
 
 		case VoxelBuffer::DEPTH_32_BIT: {
 			MarshallFloat m;
@@ -115,7 +114,7 @@ inline real_t raw_voxel_to_real(uint64_t value, VoxelBuffer::Depth depth) {
 
 } // namespace
 
-const char *VoxelBuffer::CHANNEL_ID_HINT_STRING = "Type,Sdf,Data2,Data3,Data4,Data5,Data6,Data7";
+const char *VoxelBuffer::CHANNEL_ID_HINT_STRING = "Type,Sdf,Color,Indices,Weights,Data5,Data6,Data7";
 
 VoxelBuffer::VoxelBuffer() {
 	// Minecraft uses way more than 255 block types and there is room for eventual metadata such as rotation
@@ -125,6 +124,12 @@ VoxelBuffer::VoxelBuffer() {
 	// 16-bit is better on average to handle large worlds
 	_channels[CHANNEL_SDF].depth = VoxelBuffer::DEFAULT_SDF_CHANNEL_DEPTH;
 	_channels[CHANNEL_SDF].defval = 0xffff;
+
+	_channels[CHANNEL_INDICES].depth = VoxelBuffer::DEPTH_16_BIT;
+	_channels[CHANNEL_INDICES].defval = encode_indices_to_packed_u16(0, 1, 2, 3);
+
+	_channels[CHANNEL_WEIGHTS].depth = VoxelBuffer::DEPTH_16_BIT;
+	_channels[CHANNEL_WEIGHTS].defval = encode_weights_to_packed_u16(15, 0, 0, 0);
 }
 
 VoxelBuffer::~VoxelBuffer() {
@@ -188,10 +193,11 @@ void VoxelBuffer::set_default_values(FixedArray<uint64_t, VoxelBuffer::MAX_CHANN
 
 uint64_t VoxelBuffer::get_voxel(int x, int y, int z, unsigned int channel_index) const {
 	ERR_FAIL_INDEX_V(channel_index, MAX_CHANNELS, 0);
+	ERR_FAIL_COND_V_MSG(!is_position_valid(x, y, z), 0, String("At position ({0}, {1}, {2})").format(varray(x, y, z)));
 
 	const Channel &channel = _channels[channel_index];
 
-	if (is_position_valid(x, y, z) && channel.data != nullptr) {
+	if (channel.data != nullptr) {
 		const uint32_t i = get_index(x, y, z);
 
 		switch (channel.depth) {
@@ -219,7 +225,7 @@ uint64_t VoxelBuffer::get_voxel(int x, int y, int z, unsigned int channel_index)
 
 void VoxelBuffer::set_voxel(uint64_t value, int x, int y, int z, unsigned int channel_index) {
 	ERR_FAIL_INDEX(channel_index, MAX_CHANNELS);
-	ERR_FAIL_COND(!is_position_valid(x, y, z));
+	ERR_FAIL_COND_MSG(!is_position_valid(x, y, z), String("At position ({0}, {1}, {2})").format(varray(x, y, z)));
 
 	Channel &channel = _channels[channel_index];
 
@@ -326,11 +332,9 @@ void VoxelBuffer::fill_area(uint64_t defval, Vector3i min, Vector3i max, unsigne
 	ERR_FAIL_INDEX(channel_index, MAX_CHANNELS);
 
 	Vector3i::sort_min_max(min, max);
-
 	min.clamp_to(Vector3i(0, 0, 0), _size + Vector3i(1, 1, 1));
 	max.clamp_to(Vector3i(0, 0, 0), _size + Vector3i(1, 1, 1));
 	const Vector3i area_size = max - min;
-
 	if (area_size.x == 0 || area_size.y == 0 || area_size.z == 0) {
 		return;
 	}
@@ -397,15 +401,8 @@ void VoxelBuffer::fill_f(real_t value, unsigned int channel) {
 }
 
 template <typename T>
-inline bool is_uniform(const uint8_t *p_data, uint32_t size) {
-	const T *data = (const T *)p_data;
-	const T v0 = data[0];
-	for (unsigned int i = 1; i < size; ++i) {
-		if (data[i] != v0) {
-			return false;
-		}
-	}
-	return true;
+inline bool is_uniform_b(const uint8_t *data, unsigned int item_count) {
+	return is_uniform<T>(reinterpret_cast<const T *>(data), item_count);
 }
 
 bool VoxelBuffer::is_uniform(unsigned int channel_index) const {
@@ -422,13 +419,13 @@ bool VoxelBuffer::is_uniform(unsigned int channel_index) const {
 	// Channel isn't optimized, so must look at each voxel
 	switch (channel.depth) {
 		case DEPTH_8_BIT:
-			return ::is_uniform<uint8_t>(channel.data, volume);
+			return ::is_uniform_b<uint8_t>(channel.data, volume);
 		case DEPTH_16_BIT:
-			return ::is_uniform<uint16_t>(channel.data, volume);
+			return ::is_uniform_b<uint16_t>(channel.data, volume);
 		case DEPTH_32_BIT:
-			return ::is_uniform<uint32_t>(channel.data, volume);
+			return ::is_uniform_b<uint32_t>(channel.data, volume);
 		case DEPTH_64_BIT:
-			return ::is_uniform<uint64_t>(channel.data, volume);
+			return ::is_uniform_b<uint64_t>(channel.data, volume);
 		default:
 			CRASH_NOW();
 			break;
@@ -501,9 +498,9 @@ void VoxelBuffer::copy_from(const VoxelBuffer &other, unsigned int channel_index
 	channel.depth = other_channel.depth;
 }
 
+// TODO Disallow copying from overlapping areas of the same buffer
 void VoxelBuffer::copy_from(const VoxelBuffer &other, Vector3i src_min, Vector3i src_max, Vector3i dst_min,
 		unsigned int channel_index) {
-
 	ERR_FAIL_INDEX(channel_index, MAX_CHANNELS);
 
 	Channel &channel = _channels[channel_index];
@@ -516,59 +513,28 @@ void VoxelBuffer::copy_from(const VoxelBuffer &other, Vector3i src_min, Vector3i
 		return;
 	}
 
-	Vector3i::sort_min_max(src_min, src_max);
-
-	src_min.clamp_to(Vector3i(0, 0, 0), other._size);
-	src_max.clamp_to(Vector3i(0, 0, 0), other._size + Vector3i(1, 1, 1));
-
-	dst_min.clamp_to(Vector3i(0, 0, 0), _size);
-	const Vector3i area_size = src_max - src_min;
-	//Vector3i dst_max = dst_min + area_size;
-
-	if (area_size == _size && area_size == other._size) {
-		// Equivalent of full copy between two blocks of same size
-		copy_from(other, channel_index);
-
-	} else {
-		if (other_channel.data) {
-
-			if (channel.data == nullptr) {
-				create_channel(channel_index, _size, channel.defval);
-			}
-
-			if (channel.depth == DEPTH_8_BIT) {
-				// Native format
-				// Copy row by row
-				Vector3i pos;
-				for (pos.z = 0; pos.z < area_size.z; ++pos.z) {
-					for (pos.x = 0; pos.x < area_size.x; ++pos.x) {
-						// Row direction is Y
-						const unsigned int src_ri =
-								other.get_index(pos.x + src_min.x, pos.y + src_min.y, pos.z + src_min.z);
-						const unsigned int dst_ri = get_index(pos.x + dst_min.x, pos.y + dst_min.y, pos.z + dst_min.z);
-						memcpy(&channel.data[dst_ri], &other_channel.data[src_ri], area_size.y * sizeof(uint8_t));
-					}
-				}
-
-			} else {
-				// TODO Optimized versions
-				Vector3i pos;
-				for (pos.z = 0; pos.z < area_size.z; ++pos.z) {
-					for (pos.x = 0; pos.x < area_size.x; ++pos.x) {
-						for (pos.y = 0; pos.y < area_size.y; ++pos.y) {
-							const uint64_t v = other.get_voxel(src_min + pos, channel_index);
-							set_voxel(v, dst_min + pos, channel_index);
-						}
-					}
-				}
-			}
-
-		} else if (channel.defval != other_channel.defval) {
-			if (channel.data == nullptr) {
-				create_channel(channel_index, _size, channel.defval);
-			}
-			fill_area(other_channel.defval, dst_min, dst_min + area_size, channel_index);
+	if (other_channel.data != nullptr) {
+		if (channel.data == nullptr) {
+			// Note, we do this even if the pasted data happens to be all the same value as our current channel.
+			// We assume that this case is not frequent enough to bother, and compression can happen later
+			create_channel(channel_index, _size, channel.defval);
 		}
+		const unsigned int item_size = get_depth_byte_count(channel.depth);
+		Span<const uint8_t> src(other_channel.data, other_channel.size_in_bytes);
+		Span<uint8_t> dst(channel.data, channel.size_in_bytes);
+		copy_3d_region_zxy(dst, _size, dst_min, src, other._size, src_min, src_max, item_size);
+
+	} else if (channel.defval != other_channel.defval) {
+		// This logic is still required due to how source and destination regions can be specified.
+		// The actual size of the destination area must be determined from the source area, after it has been clipped.
+		Vector3i::sort_min_max(src_min, src_max);
+		clip_copy_region(src_min, src_max, other._size, dst_min, _size);
+		const Vector3i area_size = src_max - src_min;
+		if (area_size.x <= 0 || area_size.y <= 0 || area_size.z <= 0) {
+			// Degenerate area, we'll not copy anything.
+			return;
+		}
+		fill_area(other_channel.defval, dst_min, dst_min + area_size, channel_index);
 	}
 }
 
@@ -585,13 +551,13 @@ Ref<VoxelBuffer> VoxelBuffer::duplicate(bool include_metadata) const {
 	return Ref<VoxelBuffer>(d);
 }
 
-bool VoxelBuffer::get_channel_raw(unsigned int channel_index, ArraySlice<uint8_t> &slice) const {
+bool VoxelBuffer::get_channel_raw(unsigned int channel_index, Span<uint8_t> &slice) const {
 	const Channel &channel = _channels[channel_index];
 	if (channel.data != nullptr) {
-		slice = ArraySlice<uint8_t>(channel.data, 0, channel.size_in_bytes);
+		slice = Span<uint8_t>(channel.data, 0, channel.size_in_bytes);
 		return true;
 	}
-	slice = ArraySlice<uint8_t>();
+	slice = Span<uint8_t>();
 	return false;
 }
 
@@ -632,6 +598,7 @@ void VoxelBuffer::downscale_to(VoxelBuffer &dst, Vector3i src_min, Vector3i src_
 
 	Vector3i dst_max = dst_min + ((src_max - src_min) >> 1);
 
+	// TODO This will be wrong if it overlaps the border?
 	dst_min.clamp_to(Vector3i(), dst._size);
 	dst_max.clamp_to(Vector3i(), dst._size + Vector3i(1));
 
@@ -677,16 +644,14 @@ Ref<VoxelTool> VoxelBuffer::get_voxel_tool() {
 	return Ref<VoxelTool>(memnew(VoxelToolBuffer(vb)));
 }
 
-bool VoxelBuffer::equals(const VoxelBuffer *p_other) const {
-	CRASH_COND(p_other == nullptr);
-
-	if (p_other->_size != _size) {
+bool VoxelBuffer::equals(const VoxelBuffer &p_other) const {
+	if (p_other._size != _size) {
 		return false;
 	}
 
 	for (int channel_index = 0; channel_index < MAX_CHANNELS; ++channel_index) {
 		const Channel &channel = _channels[channel_index];
-		const Channel &other_channel = p_other->_channels[channel_index];
+		const Channel &other_channel = p_other._channels[channel_index];
 
 		if ((channel.data == nullptr) != (other_channel.data == nullptr)) {
 			// Note: they could still logically be equal if one channel contains uniform voxel memory
@@ -703,7 +668,7 @@ bool VoxelBuffer::equals(const VoxelBuffer *p_other) const {
 			}
 
 		} else {
-			CRASH_COND(channel.size_in_bytes != other_channel.size_in_bytes);
+			ERR_FAIL_COND_V(channel.size_in_bytes != other_channel.size_in_bytes, false);
 			for (unsigned int i = 0; i < channel.size_in_bytes; ++i) {
 				if (channel.data[i] != other_channel.data[i]) {
 					return false;
@@ -796,33 +761,27 @@ void VoxelBuffer::for_each_voxel_metadata(Ref<FuncRef> callback) const {
 	}
 }
 
-void VoxelBuffer::for_each_voxel_metadata_in_area(Ref<FuncRef> callback, Rect3i box) const {
+void VoxelBuffer::for_each_voxel_metadata_in_area(Ref<FuncRef> callback, Box3i box) const {
 	ERR_FAIL_COND(callback.is_null());
-	const Map<Vector3i, Variant>::Element *elem = _voxel_metadata.front();
+	for_each_voxel_metadata_in_area(box, [&callback](Vector3i pos, Variant meta) {
+		const Variant key = pos.to_vec3();
+		const Variant *args[2] = { &key, &meta };
+		Variant::CallError err;
+		callback->call_func(args, 2, err);
 
-	while (elem != nullptr) {
-		if (box.contains(elem->key())) {
-			const Variant key = elem->key().to_vec3();
-			const Variant *args[2] = { &key, &elem->value() };
-			Variant::CallError err;
-			callback->call_func(args, 2, err);
-
-			ERR_FAIL_COND_MSG(err.error != Variant::CallError::CALL_OK,
-					String("FuncRef call failed at {0}").format(varray(key)));
-			// TODO Can't provide detailed error because FuncRef doesn't give us access to the object
-			// ERR_FAIL_COND_MSG(err.error != Variant::CallError::CALL_OK, false,
-			// 		Variant::get_call_error_text(callback->get_object(), method_name, nullptr, 0, err));
-
-		}
-		elem = elem->next();
-	}
+		ERR_FAIL_COND_MSG(err.error != Variant::CallError::CALL_OK,
+				String("FuncRef call failed at {0}").format(varray(key)));
+		// TODO Can't provide detailed error because FuncRef doesn't give us access to the object
+		// ERR_FAIL_COND_MSG(err.error != Variant::CallError::CALL_OK, false,
+		// 		Variant::get_call_error_text(callback->get_object(), method_name, nullptr, 0, err));
+	});
 }
 
 void VoxelBuffer::clear_voxel_metadata() {
 	_voxel_metadata.clear();
 }
 
-void VoxelBuffer::clear_voxel_metadata_in_area(Rect3i box) {
+void VoxelBuffer::clear_voxel_metadata_in_area(Box3i box) {
 	Map<Vector3i, Variant>::Element *elem = _voxel_metadata.front();
 	while (elem != nullptr) {
 		Map<Vector3i, Variant>::Element *next_elem = elem->next();
@@ -833,11 +792,11 @@ void VoxelBuffer::clear_voxel_metadata_in_area(Rect3i box) {
 	}
 }
 
-void VoxelBuffer::copy_voxel_metadata_in_area(Ref<VoxelBuffer> src_buffer, Rect3i src_box, Vector3i dst_origin) {
+void VoxelBuffer::copy_voxel_metadata_in_area(Ref<VoxelBuffer> src_buffer, Box3i src_box, Vector3i dst_origin) {
 	ERR_FAIL_COND(src_buffer.is_null());
-	ERR_FAIL_COND(src_buffer->is_box_valid(src_box));
+	ERR_FAIL_COND(!src_buffer->is_box_valid(src_box));
 
-	const Rect3i clipped_src_box = src_box.clipped(Rect3i(src_box.pos - dst_origin, _size));
+	const Box3i clipped_src_box = src_box.clipped(Box3i(src_box.pos - dst_origin, _size));
 	const Vector3i clipped_dst_offset = dst_origin + clipped_src_box.pos - src_box.pos;
 
 	const Map<Vector3i, Variant>::Element *elem = src_buffer->_voxel_metadata.front();
@@ -942,8 +901,8 @@ void VoxelBuffer::_bind_methods() {
 	BIND_ENUM_CONSTANT(CHANNEL_TYPE);
 	BIND_ENUM_CONSTANT(CHANNEL_SDF);
 	BIND_ENUM_CONSTANT(CHANNEL_COLOR);
-	BIND_ENUM_CONSTANT(CHANNEL_DATA3);
-	BIND_ENUM_CONSTANT(CHANNEL_DATA4);
+	BIND_ENUM_CONSTANT(CHANNEL_INDICES);
+	BIND_ENUM_CONSTANT(CHANNEL_WEIGHTS);
 	BIND_ENUM_CONSTANT(CHANNEL_DATA5);
 	BIND_ENUM_CONSTANT(CHANNEL_DATA6);
 	BIND_ENUM_CONSTANT(CHANNEL_DATA7);
@@ -979,15 +938,15 @@ void VoxelBuffer::_b_downscale_to(Ref<VoxelBuffer> dst, Vector3 src_min, Vector3
 }
 
 void VoxelBuffer::_b_for_each_voxel_metadata_in_area(Ref<FuncRef> callback, Vector3 min_pos, Vector3 max_pos) {
-	for_each_voxel_metadata_in_area(callback, Rect3i::from_min_max(Vector3i(min_pos), Vector3i(max_pos)));
+	for_each_voxel_metadata_in_area(callback, Box3i::from_min_max(Vector3i(min_pos), Vector3i(max_pos)));
 }
 
 void VoxelBuffer::_b_clear_voxel_metadata_in_area(Vector3 min_pos, Vector3 max_pos) {
-	clear_voxel_metadata_in_area(Rect3i::from_min_max(Vector3i(min_pos), Vector3i(max_pos)));
+	clear_voxel_metadata_in_area(Box3i::from_min_max(Vector3i(min_pos), Vector3i(max_pos)));
 }
 
 void VoxelBuffer::_b_copy_voxel_metadata_in_area(Ref<VoxelBuffer> src_buffer, Vector3 src_min_pos, Vector3 src_max_pos,
 		Vector3 dst_pos) {
 	copy_voxel_metadata_in_area(
-			src_buffer, Rect3i::from_min_max(Vector3i(src_min_pos), Vector3i(src_max_pos)), dst_pos);
+			src_buffer, Box3i::from_min_max(Vector3i(src_min_pos), Vector3i(src_max_pos)), dst_pos);
 }

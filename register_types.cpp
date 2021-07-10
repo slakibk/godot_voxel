@@ -93,7 +93,7 @@ void register_voxel_types() {
 	ClassDB::register_virtual_class<VoxelGenerator>();
 	ClassDB::register_class<VoxelGeneratorFlat>();
 	ClassDB::register_class<VoxelGeneratorWaves>();
-	ClassDB::register_class<VoxelGeneratorHeightmap>();
+	ClassDB::register_virtual_class<VoxelGeneratorHeightmap>();
 	ClassDB::register_class<VoxelGeneratorImage>();
 	ClassDB::register_class<VoxelGeneratorNoise2D>();
 	ClassDB::register_class<VoxelGeneratorNoise>();
@@ -128,6 +128,9 @@ void register_voxel_types() {
 	// Reminder: how to create a singleton accessible from scripts:
 	// Engine::get_singleton()->add_singleton(Engine::Singleton("SingletonName",singleton_instance));
 
+	PRINT_VERBOSE(String("Size of Object: {0}").format(varray((int)sizeof(Object))));
+	PRINT_VERBOSE(String("Size of Reference: {0}").format(varray((int)sizeof(Reference))));
+	PRINT_VERBOSE(String("Size of Node: {0}").format(varray((int)sizeof(Node))));
 	PRINT_VERBOSE(String("Size of VoxelBuffer: {0}").format(varray((int)sizeof(VoxelBuffer))));
 	PRINT_VERBOSE(String("Size of VoxelMeshBlock: {0}").format(varray((int)sizeof(VoxelMeshBlock))));
 	PRINT_VERBOSE(String("Size of VoxelTerrain: {0}").format(varray((int)sizeof(VoxelTerrain))));

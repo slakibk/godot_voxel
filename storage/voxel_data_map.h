@@ -56,7 +56,7 @@ public:
 	int get_default_voxel(unsigned int channel = 0);
 
 	// Gets a copy of all voxels in the area starting at min_pos having the same size as dst_buffer.
-	void get_buffer_copy(Vector3i min_pos, VoxelBuffer &dst_buffer, unsigned int channels_mask);
+	void copy(Vector3i min_pos, VoxelBuffer &dst_buffer, unsigned int channels_mask);
 
 	void paste(Vector3i min_pos, VoxelBuffer &src_buffer, unsigned int channels_mask, uint64_t mask_value,
 			bool create_new_blocks);
@@ -113,7 +113,40 @@ public:
 		}
 	}
 
-	bool is_area_fully_loaded(const Rect3i voxels_box) const;
+	bool is_area_fully_loaded(const Box3i voxels_box) const;
+
+	// D action(Vector3i pos, D value)
+	template <typename F>
+	void write_box(const Box3i &voxel_box, unsigned int channel, F action) {
+		const Box3i block_box = voxel_box.downscaled(get_block_size());
+		const Vector3i block_size(get_block_size());
+		block_box.for_each_cell_zxy([this, action, voxel_box, channel, block_size](Vector3i block_pos) {
+			VoxelDataBlock *block = get_block(block_pos);
+			if (block != nullptr) {
+				const Vector3i block_origin = block_to_voxel(block_pos);
+				Box3i local_box(voxel_box.pos - block_origin, voxel_box.size);
+				local_box.clip(Box3i(Vector3i(), block_size));
+				block->voxels->write_box(local_box, channel, action, block_origin);
+			}
+		});
+	}
+
+	// action(Vector3i pos, D0 &value, D1 &value)
+	template <typename F>
+	void write_box_2(const Box3i &voxel_box, unsigned int channel0, unsigned int channel1, F action) {
+		const Box3i block_box = voxel_box.downscaled(get_block_size());
+		const Vector3i block_size(get_block_size());
+		block_box.for_each_cell_zxy([this, action, voxel_box, channel0, channel1, block_size](Vector3i block_pos) {
+			VoxelDataBlock *block = get_block(block_pos);
+			if (block != nullptr) {
+				const Vector3i block_origin = block_to_voxel(block_pos);
+				Box3i local_box(voxel_box.pos - block_origin, voxel_box.size);
+				local_box.clip(Box3i(Vector3i(), block_size));
+				block->voxels->write_box_2_template<F, uint16_t, uint16_t>(
+						local_box, channel0, channel1, action, block_origin);
+			}
+		});
+	}
 
 private:
 	void set_block(Vector3i bpos, VoxelDataBlock *block);
